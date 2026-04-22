@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/paulgubbins/Documents/Github/**)",
+      "Read(//Users/paulgubbins/Documents/Github/cfi-map2-blockexplorer2026/**)",
+      "Read(//Users/paulgubbins/Documents/Professional/CFI/MAP2 ROUND 2/**)",
+      "Bash(find:*)",
+      "Bash(python run_all.py)",
+      "Bash(pip3 --version)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 run_all.py)",
+      "Read(//Users/paulgubbins/.config/earthengine/**)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('Project:', d.get\\('project_id','\\(none\\)'\\)\\); print\\('Type:', d.get\\('type','\\(none\\)'\\)\\)\")",
+      "Bash(mv 02_extract_elevation.py extract_elevation.py)",
+      "Bash(mv 03_extract_heat.py extract_heat.py)",
+      "Bash(mv 04_extract_flood.py extract_flood.py)",
+      "Bash(mv 05_extract_canopy.py extract_canopy.py)",
+      "Bash(ls *.py)",
+      "Bash(python3:*)",
+      "Bash(ps:*)",
+      "Bash(kill 64519)",
+      "Bash(git remote:*)",
+      "Bash(rm -rf .git)",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

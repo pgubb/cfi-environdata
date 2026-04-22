@@ -1,0 +1,115 @@
+# Configuration for cfi-environdata remote sensing extraction
+# ============================================================
+
+# Input / output paths
+input_file: "data/input/synthetic_businesses.csv"
+output_dir: "data/output"
+
+# Required input columns
+input_columns:
+  id: "business_id"
+  lat: "latitude"
+  lon: "longitude"
+  date: "fieldwork_date"
+  city: "city"
+
+# Date format in input file (Python strftime)
+date_format: "%Y-%m-%d"
+
+# ---------- Indicator 1: Elevation ----------
+elevation:
+  dataset: "USGS/SRTMGL1_003"
+  band: "elevation"
+
+# ---------- Indicator 2: Extreme Heat Days ----------
+heat:
+  dataset: "MODIS/061/MOD11A1"
+  band: "LST_Day_1km"
+  # MODIS LST is stored in Kelvin * 0.02 scale factor
+  scale_factor: 0.02
+  offset_kelvin_to_celsius: -273.15
+  # Trailing window in years before each record's fieldwork_date
+  trailing_years: 2
+  # Celsius thresholds for day-count indicators
+  thresholds_celsius: [40, 45, 50]
+  # Also compute mean and max LST over the window
+  compute_continuous: true
+
+# ---------- Indicator 3: Flood Vulnerability ----------
+flood:
+  # HAND (Height Above Nearest Drainage) from MERIT Hydro (Yamazaki et al., 2019)
+  hand:
+    dataset: "MERIT/Hydro/v1_0_1"
+    band: "hnd"
+    # Binary threshold: HAND <= this value (metres) = flood-vulnerable
+    threshold_m: 5
+  # JRC Global Surface Water supplement
+  jrc:
+    dataset: "JRC/GSW1_4/GlobalSurfaceWater"
+    # Bands to extract
+    bands: ["max_extent", "recurrence"]
+  # Low-elevation coastal zone flag (metres above sea level)
+  coastal_threshold_m: 10
+  # Cities to apply coastal flag to
+  coastal_cities: ["Lagos", "Jakarta"]
+
+# ---------- Indicator 4: Tree Canopy Cover ----------
+canopy:
+  dataset: "ESA/WorldCover/v200"
+  band: "Map"
+  # ESA WorldCover class value for "Tree cover"
+  tree_class_value: 10
+  # Buffer radii in metres around each business point
+  buffer_radii_m: [50, 150]
+  # Scale for reduction (should match dataset resolution)
+  scale_m: 10
+
+# ---------- Indicator 5: Rainfall ----------
+rainfall:
+  dataset: "UCSB-CHG/CHIRPS/DAILY"
+  band: "precipitation"
+  trailing_years: 2
+  # Daily precipitation thresholds (mm) for day-count indicators
+  thresholds_mm: [20, 50]
+  # CHIRPS native resolution ~5.5km
+  scale_m: 5566
+
+# ---------- Indicator 6: Air Quality (Aerosol Optical Depth) ----------
+airquality:
+  # MODIS MAIAC AOD — 1km daily, available up to near-present
+  dataset: "MODIS/061/MCD19A2_GRANULES"
+  band: "Optical_Depth_047"
+  # Raw values are scaled by 0.001
+  scale_factor: 0.001
+  trailing_years: 2
+  # AOD thresholds: 0.4 = moderate, 0.8 = high, 1.5 = very high
+  # These roughly correspond to PM2.5 of ~35, ~70, ~130 µg/m³
+  thresholds_aod: [0.4, 0.8, 1.5]
+
+# ---------- Indicator 7: Nighttime Lights ----------
+nightlights:
+  dataset: "NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG"
+  band: "avg_rad"
+  # Trailing window in months before fieldwork_date
+  trailing_months: 12
+  # Buffer radius for zonal mean
+  buffer_radius_m: 150
+  # VIIRS native resolution ~500m
+  scale_m: 500
+
+# ---------- Indicator 8: Built-up Surface Fraction ----------
+builtup:
+  # JRC GHSL Built-up Surface 2020, 10m resolution
+  dataset: "JRC/GHSL/P2023A/GHS_BUILT_S/2020"
+  band: "built_surface"
+  buffer_radii_m: [50, 150]
+  scale_m: 10
+
+# ---------- GEE Processing ----------
+gee:
+  # Project ID for Earth Engine (set to your GEE cloud project)
+  project: "ee-geogrids"
+  # Scale in metres for point sampling (unless overridden per indicator)
+  default_scale_m: 30
+  # Batch size for processing points (to avoid GEE memory limits)
+  batch_size: 50
