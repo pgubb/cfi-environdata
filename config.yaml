@@ -113,3 +113,24 @@ gee:
   default_scale_m: 30
   # Batch size for processing points (to avoid GEE memory limits)
   batch_size: 50
+
+# ---------- Block-Level Pipeline ----------
+blocks:
+  # Source GeoJSON files: one per country in the blockexplorer repo
+  source_dir: "../cfi-map2-blockexplorer2026/data"
+  # Local copy directory for block GeoJSONs
+  input_dir: "data/input/blocks"
+  output_dir: "data/output/blocks"
+  # Fixed analysis end date for time-series indicators (heat, rainfall, AOD, nightlights)
+  analysis_end_date: "2026-03-01"
+  # Country directory → city name mapping
+  country_city_map:
+    Brazil: "Sao Paulo"
+    Ethiopia: "Addis Ababa"
+    India: "Delhi"
+    Indonesia: "Jakarta"
+    Nigeria: "Lagos"
+  # GeoJSON property names
+  block_id_field: "block_id"
+  # Batch size (smaller than point pipeline — polygon reductions are more expensive)
+  batch_size: 25

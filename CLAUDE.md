@@ -4,7 +4,9 @@
 
 `cfi-environdata` is a Python utility that extracts remote-sensing environmental indicators from Google Earth Engine (GEE) for business GPS locations across five emerging market cities (Sao Paulo, Addis Ababa, Delhi, Jakarta, Lagos) as part of the CFI MAP2 Round 2 study of micro and small enterprises.
 
-The utility outputs a single CSV (`data/output/all_indicators.csv`) that is consumed downstream by the R analysis pipeline in `cfi-map2r2-data`.
+The utility has two pipelines:
+1. **Point-level**: Extracts indicators at individual business GPS coordinates → `data/output/all_indicators.csv` (consumed by `cfi-map2r2-data`)
+2. **Block-level**: Computes zonal statistics over sampling frame block polygons → `data/output/blocks/all_block_indicators.csv` (for study-area-level spatial analysis)
 
 ## Architecture
 
@@ -30,21 +32,34 @@ python/
   extract_nightlights.py     # Indicator 7: VIIRS monthly (per fieldwork_date)
   extract_builtup.py         # Indicator 8: JRC GHSL 10m (50m + 150m buffers)
   run_all.py                 # Orchestrator: runs all 8 + merges
+  blocks/                    # Block-level aggregation pipeline
+    utils_blocks.py          # Block polygon loading, GeoJSON→FC, batching
+    extract_*_blocks.py      # Per-indicator zonal extraction (same 8 indicators)
+    run_all_blocks.py        # Block pipeline orchestrator
 data/
   input/                     # Business coordinate CSVs
-  output/                    # Extracted indicator CSVs + data_dictionary.md
+  input/blocks/              # Sampling frame GeoJSON files (from blockexplorer repo)
+  output/                    # Point-level indicator CSVs + data_dictionary.md
+  output/blocks/             # Block-level indicator CSVs + block_data_dictionary.md
 inspect_indicators.ipynb     # Jupyter notebook for visual inspection (geemap)
 plan.md                      # Implementation plan with design decisions
 ```
 
-## Running the pipeline
+## Running the pipelines
 
+**Point-level** (business GPS coordinates):
 ```bash
 cd python
 python3 run_all.py
 ```
 
-Each `extract_*.py` can also be run standalone. The working directory must be `python/` for relative imports to resolve.
+**Block-level** (sampling frame polygons):
+```bash
+cd python/blocks
+python3 run_all_blocks.py
+```
+
+Each `extract_*.py` can also be run standalone. The working directory must be `python/` (or `python/blocks/` for block scripts) for relative imports to resolve.
 
 ## Key patterns
 
@@ -52,6 +67,7 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 - **Grouping strategy**: Time-series indicators (heat, nightlights) group by `fieldwork_date` to reuse the same image collection. Coarse-resolution indicators (rainfall at 5.5km, AOD at 1km) group by `city` instead for efficiency.
 - **Buffer-based indicators**: Canopy and built-up compute zonal stats within circular buffers (50m, 150m). Nightlights use a 150m buffer. All others are point samples.
 - **Column naming**: Buffer-dependent columns include the radius suffix (e.g., `canopy_fraction_50m`, `builtup_fraction_150m`).
+- **Block pipeline**: Uses the same GEE datasets and config but operates on polygon geometries with zonal reductions (`reduceRegions` with `ee.Reducer.mean`). No buffers or fieldwork dates — blocks use a fixed analysis period and the polygon itself as the analysis unit. Block IDs are prefixed with city name for uniqueness.
 
 ## Related repos
 

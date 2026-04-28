@@ -193,3 +193,227 @@ cfi-environdata/
 | 8 | Implementation language | Python (GEE extraction) → CSV → R (analysis) |
 | 9 | Temporal window for heat | Trailing 2 years from per-record fieldwork date |
 
+---
+
+# Block-Level Aggregation Pipeline
+
+## Motivation
+
+The point-level pipeline (above) extracts environmental indicators at individual business GPS locations to serve as covariates in the MAP2 survey analysis. The block-level pipeline serves a distinct analytical purpose: **characterising the full spatial distribution of environmental conditions across each study area's sampling frame**. This enables:
+
+- Study-area-level analysis (e.g., geospatial correlation between heat exposure and shade/canopy)
+- Maps and spatial statistics across the full extent of each city's sampling blocks
+- Comparative analysis across cities at the block level
+- Identification of environmental "hotspot" blocks (high heat + low canopy, low elevation + low HAND, etc.)
+
+The two pipelines share the same GEE data sources and `config.yaml` parameters but are otherwise independent. The block-level pipeline operates on **polygon geometries** (sampling frame blocks) rather than point coordinates, and computes **zonal statistics** (aggregations over all pixels within each block) rather than point samples.
+
+---
+
+## Input Data
+
+The input is the set of sampling frame block polygons from the MAP2 study, stored as GeoJSON files in `cfi-map2-blockexplorer2026/data/`. Each block is a ~150m × 150m polygon in WGS84/EPSG:4326, identified by a unique `block_id`.
+
+The pipeline expects one GeoJSON file per city, or a single file containing all blocks with a `city` attribute. Required properties per feature:
+
+- `block_id` (string): Unique block identifier
+- `city` (string): City name
+
+Geometry: Polygon (the block boundary). All zonal computations use the block polygon directly — no buffers are applied.
+
+### Ingestion
+
+A utility function will load GeoJSON block polygons into a GeoDataFrame and convert them to GEE `FeatureCollection`s for server-side reduction. Blocks will be processed in batches (as in the point pipeline) to stay within GEE memory limits, though the optimal batch size will likely be smaller (10–25 blocks) since polygon reductions are more expensive than point samples.
+
+---
+
+## Indicator Design: Point vs. Block Differences
+
+The block pipeline reuses the same remote sensing datasets but differs in three key ways:
+
+1. **Spatial aggregation**: Instead of sampling a single pixel (point) or computing stats within a circular buffer, each indicator is reduced over the full block polygon using `ee.Image.reduceRegion` or `reduceRegions`. This yields distribution statistics (mean, min, max, std, count) rather than a single value.
+
+2. **No fieldwork_date dependency**: The point pipeline ties temporal indicators (heat, rainfall, AOD) to each record's fieldwork date. The block pipeline uses a **fixed analysis period** common to all blocks within a city (configurable in `config.yaml`), since blocks have no associated survey date. A sensible default is the 2-year window ending at the city's median fieldwork date, or a fixed reference date.
+
+3. **No buffer radii**: The block polygon itself is the analysis unit. Canopy and built-up fractions are computed directly over the block footprint rather than within circular buffers around a centroid.
+
+---
+
+## Block-Level Indicators
+
+### Indicator 1: Elevation
+
+| Output column | Type | Description |
+|---|---|---|
+| `elev_mean_m` | float | Mean SRTM elevation across block pixels |
+| `elev_min_m` | float | Minimum elevation in block |
+| `elev_max_m` | float | Maximum elevation in block |
+| `elev_std_m` | float | Standard deviation of elevation (terrain roughness proxy) |
+| `elev_range_m` | float | Elevation range (max − min) within block |
+
+**Method**: `reduceRegions` with combined reducer (mean, min, max, stdDev) at 30m scale.
+
+### Indicator 2: Extreme Heat Days
+
+| Output column | Type | Description |
+|---|---|---|
+| `heat_days_gt40c_mean` | float | Mean count of days > 40°C LST across block pixels |
+| `heat_days_gt45c_mean` | float | Mean count of days > 45°C LST across block pixels |
+| `heat_days_gt50c_mean` | float | Mean count of days > 50°C LST across block pixels |
+| `lst_mean_c` | float | Mean daytime LST across block pixels and time |
+| `lst_max_c` | float | Maximum daytime LST observed in block over analysis period |
+| `lst_valid_obs_mean` | float | Mean valid observation count across block pixels |
+
+**Method**: Same temporal compositing as point pipeline (threshold binary images → sum over time), then reduce the resulting image over each block polygon with `ee.Reducer.mean()` at 1000m scale. At 1km MODIS resolution, most 150m blocks will fall within a single pixel, so block-level values will often match the pixel value. The aggregation is still meaningful because blocks near pixel boundaries will get area-weighted values, and the pipeline is forward-compatible with higher-resolution thermal data.
+
+### Indicator 3: Flood Vulnerability
+
+| Output column | Type | Description |
+|---|---|---|
+| `hand_mean_m` | float | Mean HAND across block |
+| `hand_min_m` | float | Minimum HAND in block (worst-case flood exposure) |
+| `hand_flood_frac` | float | Fraction of block area with HAND ≤ 5m |
+| `jrc_max_extent_frac` | float | Fraction of block within JRC max water extent |
+| `jrc_recurrence_mean` | float | Mean JRC water recurrence across block |
+| `coastal_lowland` | integer | 1 if coastal city and mean elevation < 10m |
+
+**Method**: HAND sampled at 30m. The `hand_flood_frac` is derived by converting HAND to a binary mask (≤ 5m → 1) and taking the mean over the block polygon.
+
+### Indicator 4: Tree Canopy Cover
+
+| Output column | Type | Description |
+|---|---|---|
+| `canopy_fraction` | float | Fraction of block area classified as tree cover |
+| `canopy_pixel_count` | integer | Total valid 10m pixels in block |
+| `canopy_tree_pixels` | integer | Count of tree-classified pixels in block |
+
+**Method**: ESA WorldCover binary tree mask, reduced over block polygon with mean/count/sum at 10m scale. No buffer needed — the block polygon is the zone. For a 150m × 150m block, expect ~225 pixels.
+
+**Analytical note**: This is the key variable for the heat–shade correlation analysis. At the block level, canopy fraction directly represents the proportion of the block with overhead tree cover, which modulates surface temperature. Correlating `canopy_fraction` with `lst_mean_c` block-by-block within each city will reveal the strength of the urban cooling effect of tree cover.
+
+### Indicator 5: Rainfall
+
+| Output column | Type | Description |
+|---|---|---|
+| `rain_days_gt20mm` | integer | Days with precipitation > 20mm |
+| `rain_days_gt50mm` | integer | Days with precipitation > 50mm |
+| `rain_total_mm` | float | Total accumulated precipitation |
+| `rain_mean_daily_mm` | float | Mean daily precipitation |
+| `rain_max_day_mm` | float | Maximum single-day precipitation |
+
+**Method**: CHIRPS daily reduced at 5566m scale. At ~5.5km resolution, all blocks within the same neighbourhood will share identical values. The primary variation is between cities and between city quadrants. Still included for completeness and cross-indicator analysis.
+
+### Indicator 6: Air Quality
+
+| Output column | Type | Description |
+|---|---|---|
+| `aod_mean` | float | Mean AOD at 470nm over analysis period |
+| `aod_max` | float | Maximum AOD observed |
+| `aod_days_gt0p4` | integer | Days with AOD > 0.4 |
+| `aod_days_gt0p8` | integer | Days with AOD > 0.8 |
+| `aod_days_gt1p5` | integer | Days with AOD > 1.5 |
+
+**Method**: MODIS MAIAC at 1000m scale. As with heat, most blocks fall within a single AOD pixel, so block-level values approximate point-level values. Useful for cross-indicator analysis (e.g., AOD vs. canopy, AOD vs. built-up).
+
+### Indicator 7: Nighttime Lights
+
+| Output column | Type | Description |
+|---|---|---|
+| `ntl_mean_radiance` | float | Mean VIIRS radiance across block pixels and time |
+| `ntl_max_radiance` | float | Maximum monthly radiance observed in block |
+
+**Method**: VIIRS monthly composites at 500m. Mean of temporal composite reduced over block polygon. The 150m block fits within a single 500m pixel, so block values approximate pixel values.
+
+### Indicator 8: Built-up Surface Fraction
+
+| Output column | Type | Description |
+|---|---|---|
+| `builtup_fraction` | float | Mean built-up surface fraction across block |
+| `builtup_pixel_count` | integer | Valid 10m pixels in block |
+
+**Method**: GHSL 10m, reduced with mean/count at 10m scale over block polygon. Like canopy, no buffer needed.
+
+---
+
+## File Structure
+
+```
+python/
+  blocks/                          # Block-level pipeline (separate from point pipeline)
+    __init__.py
+    utils_blocks.py                # Block polygon loading, GeoJSON→FeatureCollection, batching
+    extract_elevation_blocks.py
+    extract_heat_blocks.py
+    extract_flood_blocks.py
+    extract_canopy_blocks.py
+    extract_rainfall_blocks.py
+    extract_airquality_blocks.py
+    extract_nightlights_blocks.py
+    extract_builtup_blocks.py
+    run_all_blocks.py              # Orchestrator: runs all 8 + merges
+data/
+  input/
+    blocks/                        # Sampling frame GeoJSON files per city
+  output/
+    blocks/                        # Block-level indicator CSVs
+      all_block_indicators.csv     # Merged output (one row per block)
+      block_data_dictionary.md     # Data dictionary for block-level outputs
+```
+
+The `python/blocks/` scripts import shared utilities from `python/utils.py` (GEE auth, config loading, save_output) and add block-specific helpers in `utils_blocks.py` (GeoJSON loading, polygon-to-FeatureCollection conversion, block batching).
+
+---
+
+## Configuration
+
+New block-level config section in `config.yaml`:
+
+```yaml
+# ---------- Block-Level Pipeline ----------
+blocks:
+  # Input GeoJSON files (one per city, or a single merged file)
+  input_dir: "data/input/blocks"
+  output_dir: "data/output/blocks"
+  # Fixed analysis period for time-series indicators (heat, rainfall, AOD, nightlights)
+  # Used instead of per-record fieldwork_date
+  analysis_end_date: "2026-03-01"
+  # Properties in GeoJSON features
+  block_id_field: "block_id"
+  city_field: "city"
+  # Batch size (smaller than point pipeline due to polygon reduction cost)
+  batch_size: 25
+```
+
+Indicator-specific parameters (datasets, thresholds, scale factors) are shared with the point pipeline via the existing config sections. The `blocks.analysis_end_date` combined with each indicator's `trailing_years` / `trailing_months` defines the temporal window.
+
+---
+
+## Implementation Order
+
+1. **`utils_blocks.py`** — GeoJSON loading, polygon-to-FeatureCollection, block batching, output saving
+2. **`extract_elevation_blocks.py`** — Simplest indicator, validates the zonal reduction pattern
+3. **`extract_canopy_blocks.py`** — High-resolution (10m), many pixels per block, tests performance
+4. **`extract_builtup_blocks.py`** — Same pattern as canopy (10m zonal stats)
+5. **`extract_flood_blocks.py`** — Multi-source (HAND + JRC), fractional coverage computation
+6. **`extract_heat_blocks.py`** — Time-series processing + zonal reduction
+7. **`extract_rainfall_blocks.py`** — Time-series, coarse resolution
+8. **`extract_airquality_blocks.py`** — Time-series, coarse resolution
+9. **`extract_nightlights_blocks.py`** — Time-series, moderate resolution
+10. **`run_all_blocks.py`** — Orchestrator + merge
+11. **`block_data_dictionary.md`** — Documentation
+
+---
+
+## Key Design Decisions
+
+| # | Decision | Selection | Rationale |
+|---|---|---|---|
+| B1 | Separate pipeline | `python/blocks/` subdirectory | Keeps point-level extraction intact; different input format, analysis unit, and use case |
+| B2 | Input format | GeoJSON block polygons | Native format from sampling frame; preserves polygon geometry for zonal stats |
+| B3 | Temporal window | Fixed per-city analysis period | Blocks have no fieldwork date; a common window ensures comparability across blocks |
+| B4 | Spatial reduction | `reduceRegions` over block polygon | The block itself is the analysis unit — no buffers, no centroids |
+| B5 | Output key | `block_id` | One row per block in output CSV |
+| B6 | Shared config | Same `config.yaml`, new `blocks:` section | Reuses dataset IDs, thresholds, scale factors; adds block-specific settings |
+| B7 | Batch size | 25 blocks (default) | Polygon reductions are more compute-intensive than point samples |
+| B8 | Shared utilities | Import from `python/utils.py` | GEE auth, config loading, save_output are reusable; block-specific helpers in `utils_blocks.py` |
+
