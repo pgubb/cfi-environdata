@@ -132,5 +132,6 @@ blocks:
     Nigeria: "Lagos"
   # GeoJSON property names
   block_id_field: "block_id"
-  # Batch size (smaller than point pipeline — polygon reductions are more expensive)
-  batch_size: 25
+  # Batch size — blocks are simple rectangles so can handle larger batches
+  # than the point pipeline. Larger batches = fewer GEE API round-trips.
+  batch_size: 100

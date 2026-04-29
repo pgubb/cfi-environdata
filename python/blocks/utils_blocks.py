@@ -6,6 +6,8 @@ FeatureCollections, and provides batching helpers for zonal reductions.
 
 import json
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import ee
@@ -25,6 +27,43 @@ DEFAULT_COUNTRY_CITY_MAP = {
     "Indonesia": "Jakarta",
     "Nigeria": "Lagos",
 }
+
+# --- GEE resilience settings ---
+GETINFO_TIMEOUT_SEC = 300   # 5 min per request (GEE server limit is ~5 min)
+GETINFO_MAX_RETRIES = 3
+GETINFO_RETRY_BACKOFF = 30  # seconds between retries (grows by 2x each attempt)
+
+
+def safe_getinfo(ee_object, timeout=GETINFO_TIMEOUT_SEC,
+                 max_retries=GETINFO_MAX_RETRIES):
+    """Call .getInfo() with a client-side timeout and retry on failure.
+
+    GEE's getInfo() blocks indefinitely if the server stalls. This wraps
+    it in a thread with a timeout and retries on transient errors (timeout,
+    EEException, connection errors).
+
+    Returns the getInfo() result, or raises after max_retries.
+    """
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(ee_object.getInfo)
+                result = future.result(timeout=timeout)
+            return result
+        except FuturesTimeout:
+            last_err = TimeoutError(
+                f"getInfo() timed out after {timeout}s (attempt {attempt}/{max_retries})"
+            )
+        except Exception as e:
+            last_err = e
+
+        backoff = GETINFO_RETRY_BACKOFF * (2 ** (attempt - 1))
+        print(f"    [retry] Attempt {attempt}/{max_retries} failed: {last_err}. "
+              f"Retrying in {backoff}s...")
+        time.sleep(backoff)
+
+    raise last_err
 
 
 def load_blocks(config: dict) -> gpd.GeoDataFrame:
@@ -119,3 +158,59 @@ def save_block_output(df: pd.DataFrame, name: str, config: dict):
     df.to_csv(out_path, index=False)
     print(f"Saved {len(df)} rows to {out_path}")
     return out_path
+
+
+# --- Checkpoint / resume support ---
+
+def _checkpoint_path(indicator_name: str, config: dict) -> Path:
+    """Return the path for an indicator's checkpoint CSV."""
+    out_dir = Path(__file__).parent.parent.parent / config["blocks"]["output_dir"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f".checkpoint_{indicator_name}.csv"
+
+
+def load_checkpoint(indicator_name: str, config: dict) -> pd.DataFrame | None:
+    """Load a partial-results checkpoint if it exists.
+
+    Returns a DataFrame of already-processed rows, or None if no
+    checkpoint exists.
+    """
+    cp = _checkpoint_path(indicator_name, config)
+    if cp.exists():
+        df = pd.read_csv(cp)
+        print(f"  Resuming from checkpoint: {len(df)} blocks already processed")
+        return df
+    return None
+
+
+def append_checkpoint(rows: list[dict], indicator_name: str, config: dict):
+    """Append a batch of result rows to the checkpoint CSV.
+
+    Creates the file with headers on first write; appends without
+    headers on subsequent writes.
+    """
+    cp = _checkpoint_path(indicator_name, config)
+    df = pd.DataFrame(rows)
+    write_header = not cp.exists()
+    df.to_csv(cp, mode="a", header=write_header, index=False)
+
+
+def clear_checkpoint(indicator_name: str, config: dict):
+    """Remove the checkpoint file after successful completion."""
+    cp = _checkpoint_path(indicator_name, config)
+    if cp.exists():
+        cp.unlink()
+
+
+def filter_remaining_blocks(
+    blocks_gdf: gpd.GeoDataFrame,
+    checkpoint_df: pd.DataFrame | None,
+    block_id_field: str = "block_id",
+) -> gpd.GeoDataFrame:
+    """Return only blocks that haven't been processed yet."""
+    if checkpoint_df is None or checkpoint_df.empty:
+        return blocks_gdf
+    done_ids = set(checkpoint_df["block_id"])
+    remaining = blocks_gdf[~blocks_gdf[block_id_field].isin(done_ids)]
+    print(f"  {len(remaining)} blocks remaining after checkpoint filter")
+    return remaining
