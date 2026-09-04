@@ -6,7 +6,11 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points,
     df_to_ee_feature_collection, batch_points, save_output,
+    safe_getinfo, load_checkpoint, append_checkpoint, filter_remaining_points,
+    finish_indicator, BatchProgress,
 )
+
+INDICATOR_NAME = "flood"
 
 
 def load_hand(config: dict) -> ee.Image:
@@ -57,8 +61,12 @@ def extract_flood(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         elev.rename("elevation_for_coastal"),
     ])
 
-    all_results = []
-    for batch in batch_points(df, gee_cfg["batch_size"]):
+    remaining = filter_remaining_points(
+        df, load_checkpoint(INDICATOR_NAME, config))
+    progress = BatchProgress(len(remaining))
+
+    for batch in batch_points(remaining, gee_cfg["batch_size"]):
+        batch_rows = []
         fc = df_to_ee_feature_collection(batch)
 
         sampled = stacked.reduceRegions(
@@ -67,7 +75,7 @@ def extract_flood(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             scale=gee_cfg["default_scale_m"],
         )
 
-        for f in sampled.getInfo()["features"]:
+        for f in safe_getinfo(sampled)["features"]:
             props = f["properties"]
             hand_val = props.get("hand_m")
             elev_val = props.get("elevation_for_coastal")
@@ -90,7 +98,7 @@ def extract_flood(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 else 0
             )
 
-            all_results.append({
+            batch_rows.append({
                 "business_id": props["business_id"],
                 "hand_m": hand_val,
                 "hand_flood_vulnerable": flood_vulnerable,
@@ -99,7 +107,10 @@ def extract_flood(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 "coastal_lowland": coastal_flag,
             })
 
-    return pd.DataFrame(all_results)
+        append_checkpoint(batch_rows, INDICATOR_NAME, config)
+        progress.update(len(batch))
+
+    return finish_indicator(INDICATOR_NAME, config)
 
 
 def main():

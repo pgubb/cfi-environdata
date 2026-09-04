@@ -1,6 +1,10 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. Each row corresponds to one business location. GEE-derived columns are described in detail below; input passthrough columns (`business_id`, `latitude`, `longitude`, `fieldwork_date`, `city`) are carried from the input file unchanged.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 49 columns: 7 passthrough from the input, 42 GEE-derived.
+
+**Last generated:** 2026-08-26, 10,989 businesses across Addis Ababa (4,262), Jakarta (3,714) and Lagos (3,013). This was a three-city test run — Brazil and India were excluded via `gsmm.include_countries` in `config.yaml`. The full five-city frame is 20,124 listings.
+
+> **These rows carry exact business coordinates.** `data/input/gsmm_listings.csv` and any file derived from it are git-ignored and must not be copied into `cfi-map2r2-data`. Only the derived indicator columns are safe to share back — they describe the neighbourhood, not the address. See the header of `cfi-map2r2-data/R/prep_enumeration.R`.
 
 ---
 
@@ -8,11 +12,27 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 | Column | Type | Description |
 |---|---|---|
-| `business_id` | string | Unique business identifier, carried from input file. |
+| `business_id` | string | **Composite key: `<Country>_<Enterprise ID>`** (e.g. `Nigeria_12641538`). GSMM enterprise IDs are unique only *within* a country — 5 IDs are reused across two countries in the five-city frame — so a bare ID would silently fan out rows on merge. |
 | `latitude` | float | WGS84 latitude of the business (decimal degrees). |
 | `longitude` | float | WGS84 longitude of the business (decimal degrees). |
-| `fieldwork_date` | string | Date of field data collection (YYYY-MM-DD). Used to define the temporal window for heat indicators. |
-| `city` | string | City name (one of: Sao Paulo, Addis Ababa, Delhi, Jakarta, Lagos). Used to determine coastal flag eligibility. |
+| `city` | string | City name (one of: Sao Paulo, Addis Ababa, Delhi, Jakarta, Lagos). Determines the analysis window group and coastal-flag eligibility. |
+| `country` | string | Source country. **Join back onto `enum_data` on `country` + `enterprise_id`, never `enterprise_id` alone.** |
+| `enterprise_id` | string | The raw GSMM `Enterprise ID`, unprefixed. Not unique on its own — see `business_id`. |
+| `fieldwork_date` | string | **Date the business was listed** during GSMM enumeration (YYYY-MM-DD), from the export's `Date time` column. Descriptive only — **it no longer defines any indicator's temporal window** (see below). |
+
+---
+
+## The analysis window (applies to indicators 2, 5, 6, 7)
+
+Four indicators reduce an image collection over a trailing window and sample the result per point. Two properties of that window matter for interpretation:
+
+**Grouping is by city, not by listing date.** Two businesses listed a week apart share >99% of a two-year window, and at MODIS (1 km) / CHIRPS (5.5 km) resolution the per-date precision buys nothing while costing ~10x more computation (29 distinct listing dates vs 3 cities). **Consequence: every business in a city receives the same window, so these indicators vary only *spatially* within a city, never temporally.**
+
+**The window is a fixed length.** It ends at `time_window.analysis_end_date` in `config.yaml` (currently **2026-07-31**) and runs back exactly `trailing_years` / `trailing_months`. Set that key to `null` to anchor each city at its own latest listing date instead (lengths stay equal, calendar periods become city-specific).
+
+Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier version widened the window to span all listing dates (`min(date) − 2yr → max(date)`), producing 755–761 days depending on the city's fieldwork spread — which inflated those counts and made them non-comparable across cities. All windows are now exactly **730 days** (2024-07-31 → 2026-07-31), or 365 for nightlights.
+
+`analysis_end_date` is set to 2026-07-31 because that is the last date with complete CHIRPS v3 coverage. Listing runs to 2026-08-15, so the final ~2 weeks are excluded deliberately: including them would leave rainfall with no data over a period the other indicators covered.
 
 ---
 
@@ -42,8 +62,8 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 | `lst_mean_c` | float | °C | Mean daytime land surface temperature across all valid observations in the trailing 2-year window. |
 | `lst_max_c` | float | °C | Maximum daytime land surface temperature observed in the trailing 2-year window. |
 | `lst_valid_obs` | integer | count of days | Number of clear-sky (non-masked) MODIS observations at the point within the trailing 2-year window. |
-| `heat_window_start` | string | date (YYYY-MM-DD) | Start date of the 2-year trailing window (= `fieldwork_date` minus 2 years). |
-| `heat_window_end` | string | date (YYYY-MM-DD) | End date of the trailing window (= `fieldwork_date`). |
+| `heat_window_start` | string | date (YYYY-MM-DD) | Start of the window. Constant across all rows (2024-07-31). |
+| `heat_window_end` | string | date (YYYY-MM-DD) | End of the window. Constant across all rows (2026-07-31). |
 
 **Data source:** MODIS/Terra Land Surface Temperature and Emissivity Daily Global 1km (MOD11A1), Collection 6.1.
 - GEE asset: `MODIS/061/MOD11A1`, band `LST_Day_1km`
@@ -52,7 +72,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 **Processing:**
 
-1. **Temporal filtering:** The MODIS image collection is filtered to a 2-year window ending on each record's `fieldwork_date` and starting exactly 2 years prior. Different fieldwork dates produce different windows, so businesses surveyed on different dates have heat metrics computed over different (potentially overlapping) periods.
+1. **Temporal filtering:** The MODIS collection is filtered to a fixed 730-day window per city (see *The analysis window* above) — **not** to a per-business window. The stacked summary image is built once per city and sampled for every batch in that city. Businesses within a city therefore differ only by location, never by listing date.
 
 2. **Unit conversion:** Raw MODIS LST_Day_1km values are stored as scaled integers in Kelvin (digital number × 0.02 = temperature in Kelvin). Each image is converted to Celsius: `(DN × 0.02) − 273.15`.
 
@@ -67,7 +87,15 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 **Analytical notes:**
 
 - **Land Surface Temperature vs. Air Temperature:** LST measures the radiative temperature of the land surface, not the ambient air temperature. In urban areas with impervious surfaces, LST can be 10–20°C higher than air temperature measured at weather stations. LST is more relevant for characterising localised heat exposure of ground-level businesses and captures urban heat island variation within a city.
-- **Cloud bias:** The threshold day counts are necessarily counts of *clear-sky* exceedance days. In cities with heavy cloud cover (Lagos, Jakarta, São Paulo), 30–50% of days may lack observations. The `lst_valid_obs` column allows normalisation (e.g., `heat_days_gt40c / lst_valid_obs` gives the fraction of observed days exceeding the threshold) or flagging of low-coverage locations.
+- **Cloud bias — `heat_days_gt*` are NOT comparable across cities as raw counts.** These are counts of *clear-sky* exceedance days, and clear-sky coverage differs enormously by city. Observed in the 2026-08-26 run, out of 730 possible days:
+
+  | City | mean `lst_valid_obs` | coverage |
+  |---|---|---|
+  | Addis Ababa | 404 | 55% |
+  | Jakarta | 86 | 12% |
+  | Lagos | 40 | 6% |
+
+  Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis's `0` means "0 of ~404". A 10x difference in denominator. **Normalise before comparing across cities** — `heat_days_gt40c / lst_valid_obs` gives the fraction of observed days exceeding the threshold. `lst_mean_c` and `lst_max_c` are unaffected by this (they are averages over whatever was observed), though `lst_max_c` is still biased low where coverage is sparse.
 - **Resolution:** At 1km, multiple businesses within the same neighbourhood will share a MODIS pixel and receive identical values. This limits within-city spatial variation for this indicator.
 - **Overpass time:** The Terra satellite passes over at ~10:30 local solar time. This captures mid-morning surface temperature, which is typically lower than the afternoon peak. Values should not be interpreted as daily maximum air temperature.
 
@@ -80,7 +108,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 | `hand_m` | float | metres | Height Above Nearest Drainage (HAND) — the vertical distance from the business location to the nearest stream channel along the hydrological flow path. Lower values indicate greater proximity to drainage channels and higher flood susceptibility. |
 | `hand_flood_vulnerable` | integer | binary (0/1) | 1 if `hand_m` ≤ 5 metres, 0 otherwise. A HAND value ≤ 5m is a standard proxy for floodplain membership in the hydrological literature. |
 | `jrc_max_extent` | integer | binary (0/1) | 1 if the location falls within the maximum observed water extent (1984–2021), 0 otherwise. Indicates whether surface water has *ever* been detected at this location in the Landsat archive. |
-| `jrc_recurrence` | float | percentage (0–100) | Water recurrence: the percentage of months with water detection (out of all months with valid observations) between 1984 and 2021. Higher values indicate more persistent or frequently recurring water presence. `NaN` where the pixel has never been observed as water. |
+| `jrc_recurrence` | float | percentage (0–100) | Water recurrence: percentage of months with water detection, 1984–2021. `NaN` where the pixel has never been observed as water — which is **almost everywhere**: in the 2026-08-26 run this column was null for **10,970 of 10,989 rows (99.8%)**, and all 19 non-null values were exactly 100.0. Effectively unusable as a continuous variable at business locations. Use `jrc_max_extent` (fully populated binary) instead. |
 | `coastal_lowland` | integer | binary (0/1) | 1 if the business is in a designated coastal city (Lagos or Jakarta) **and** its SRTM elevation is below 10 metres above sea level. 0 otherwise. A proxy for storm-surge and tidal flood exposure. |
 
 ### HAND
@@ -107,7 +135,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 **Analytical notes:**
 - `jrc_max_extent` captures the historical maximum water footprint. A value of 1 means water was detected at least once at this location over 37 years of Landsat observations. It does not indicate current water presence or flood frequency.
-- `jrc_recurrence` is `NaN` for pixels that have never been classified as water. A value of 100 indicates permanent water; values between 0 and 100 indicate seasonal or intermittent water.
+- `jrc_recurrence` is `NaN` for pixels never classified as water. **In practice this means it is ~99.8% missing at business locations** — businesses are on land, so the column carries almost no information here. It is retained for completeness; prefer `jrc_max_extent`. Consider dropping it from analysis datasets rather than treating its nulls as missing data to impute.
 - JRC surface water detection is based on optical imagery and can be affected by cloud cover, urban surface reflectance, and shadows. It may undercount flood events in persistently cloudy regions.
 
 ### Coastal Lowland Flag
@@ -169,15 +197,19 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 | `rain_window_start` | string | date (YYYY-MM-DD) | Start date of the precipitation window. |
 | `rain_window_end` | string | date (YYYY-MM-DD) | End date of the precipitation window. |
 
-**Data source:** Climate Hazards Group InfraRed Precipitation with Station data (CHIRPS) Daily, version 2.0.
-- GEE asset: `UCSB-CHG/CHIRPS/DAILY`, band `precipitation`
+**Data source:** CHIRPS version 3, daily, "sat" variant.
+- GEE asset: `UCSB-CHC/CHIRPS/V3/DAILY_SAT`, band `precipitation`
 - Resolution: 0.05° (~5.5km)
-- Coverage: 50°S–50°N, 1981–present (near-real-time updates)
+- Coverage: this asset holds 10,439 daily images from 1998-01-01 to 2026-07-31 (the catalog page quotes 1981 for the CHIRPS family)
 - Reference: Funk, C. et al. (2015). "The climate hazards infrared precipitation with stations — a new environmental record for monitoring extremes." *Scientific Data*, 2, 150066.
+
+**Changed 2026-08-26** from `UCSB-CHG/CHIRPS/DAILY` (v2.0 Final, station-blended, 1981–). Same band name and same 5,566 m grid, so no column or scale changes.
+
+**What `_SAT` means — it is *not* satellite-only.** DAILY_SAT partitions **station-blended pentadal CHIRPS-v3 totals** into daily amounts using NASA IMERG Late V07. Station observations still inform the pentad totals; only the daily disaggregation is satellite-driven. Gauge calibration is therefore retained, not discarded. (`UCSB-CHC/CHIRPS/V3/DAILY` — a blended daily variant — does not exist in the catalog; `DAILY_SAT` is the only V3 daily product.)
 
 **Processing:**
 
-1. **Temporal filtering:** The CHIRPS daily image collection is filtered to a window covering the city's fieldwork period. Businesses are grouped by city and processed together against a single CHIRPS aggregation (since at 5.5km resolution, businesses in the same city share very few unique pixels and marginal date differences have negligible effect on 2-year totals).
+1. **Temporal filtering:** Filtered to the fixed 730-day window per city (see *The analysis window* above). Businesses are grouped by city and processed against a single CHIRPS aggregation, since at 5.5 km resolution businesses in the same city share very few unique pixels.
 
 2. **Threshold counts (`rain_days_gt{X}mm`):** For each threshold (20mm, 50mm), each daily image is converted to a binary mask (1 where precipitation > threshold, 0 otherwise). These binary images are summed across the time series.
 
@@ -190,7 +222,9 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 - **Resolution limitation:** At ~5.5km, CHIRPS cannot capture localised convective rainfall differences within a city. Most or all businesses in the same urban area will receive identical or near-identical values. The primary variation is **between cities**, not within them.
 - **Threshold interpretation:** 20mm/day is widely used in meteorological literature as the boundary for "heavy" rainfall. 50mm/day represents "very heavy" rainfall and is commonly associated with urban flood events in tropical cities. These thresholds can be adjusted in `config.yaml`.
 - **CHIRPS methodology:** CHIRPS blends satellite cold-cloud-duration estimates with weather station data. It is well-validated for tropical regions and is the standard precipitation dataset for climate hazard monitoring in the Global South.
-- **Temporal window:** The window is computed per-city (earliest fieldwork date minus 2 years to latest fieldwork date) rather than per-business, for computational efficiency. This means businesses surveyed on different dates within the same city share the same rainfall values.
+- **Temporal window:** Fixed at exactly 730 days per city rather than per-business. Businesses in the same city share the same rainfall values, so this indicator varies almost entirely *between* cities.
+- **`rain_valid_obs` is 730 for every row.** CHIRPS is gap-filled and not cloud-masked, so unlike heat and AOD there is no coverage bias: **`rain_days_gt20mm` and `rain_days_gt50mm` ARE directly comparable across cities.** This is the only day-count indicator for which that holds.
+- **Observed in the 2026-08-26 run** (2-year totals, annualised in brackets): Jakarta 5,525 mm (2,762/yr), Lagos 3,686 mm (1,843/yr), Addis Ababa 2,304 mm (1,152/yr).
 
 ---
 
@@ -217,7 +251,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 **Processing:**
 
-1. **Temporal filtering:** Grouped by city (same approach as rainfall — one aggregation per city covering the full fieldwork window minus 2 years).
+1. **Temporal filtering:** Grouped by city over the fixed 730-day window (see *The analysis window* above). The collection is **also filtered spatially** with `filterBounds` on the city's bounding box. This is essential and specific to this indicator: `MCD19A2_GRANULES` is a *granule* collection with many overlapping swaths per day, so `filterDate` alone leaves **1,019,444** images to reduce over, against **55,099** once restricted to one city. (Heat and rainfall read daily *gridded* composites — one global image per day, 730 total — so they need no spatial filter.) Verified bit-identical output before and after adding it: granules that do not intersect a point contribute masked pixels, which the mean/sum/count reducers skip.
 
 2. **Unit conversion:** Raw MAIAC AOD values are stored as scaled integers (digital number × 0.001 = AOD). Each image is converted to actual AOD values.
 
@@ -231,8 +265,9 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 - **AOD as a PM2.5 proxy:** Aerosol Optical Depth measures the total columnar aerosol loading in the atmosphere. It is the most widely used satellite-derived proxy for ground-level PM2.5 particulate pollution (van Donkelaar et al., 2016). However, the relationship is not 1:1 — AOD is affected by aerosol vertical distribution, humidity, and aerosol composition. Use as a relative exposure ranking rather than an absolute PM2.5 estimate.
 - **Why not direct PM2.5?** Global satellite-derived PM2.5 products (e.g., van Donkelaar V5) are calibrated and validated but only available as annual composites through 2022. MAIAC AOD provides daily, 1km data up to the present, enabling temporal coverage matching the study's 2024–2026 fieldwork period.
-- **Cloud/quality masking:** AOD can only be retrieved under clear-sky conditions. The `aod_valid_obs` column indicates how many days had retrievals. In persistently cloudy cities (Lagos wet season, Jakarta), coverage may be low.
-- **Cross-city interpretation:** AOD values are strongly city-dependent. Delhi (mean ~0.8) and Lagos (mean ~0.6) are among the most polluted cities globally; Addis Ababa and São Paulo are substantially cleaner. Within-city variation at 1km can capture gradients near industrial zones, traffic corridors, or open burning areas.
+- **Cloud/quality masking — `aod_days_gt*` are NOT comparable across cities as raw counts,** for the same reason as the heat day-counts. Observed in the 2026-08-26 run, of 730 possible days: Addis Ababa 347 valid retrievals, Jakarta 202, Lagos 91. Lagos's `aod_days_gt0p4 = 69` is out of 91 observations (76% of observed days); Addis's `93` is out of 347 (27%) — so the city with the *lower* raw count has the *higher* exceedance rate. **Normalise by `aod_valid_obs` before any cross-city comparison.** `aod_mean`, `aod_median` and `aod_max` are unaffected.
+- **Cross-city interpretation:** AOD values are strongly city-dependent. Observed in the 2026-08-26 run: Lagos `aod_mean` 0.648 (`aod_max` 3.17), Jakarta 0.480, Addis Ababa 0.306. Within-city variation at 1km can capture gradients near industrial zones, traffic corridors, or open burning areas. Delhi and São Paulo were not in this run.
+- **Performance (this indicator is the pipeline bottleneck).** Request cost is dominated by the collection reduction and is nearly **independent of how many points the request carries** — measured on Addis: 10 points 167s, 200 points 167s, 1,000 points 280s. Smaller batches are therefore strictly *worse*. `airquality.batch_size: 1000` in `config.yaml` overrides the global `gee.batch_size: 50` for this reason (11 requests instead of 220). GEE still returns `Computation timed out.` server-side on roughly every other request; the retry in `utils.safe_getinfo()` absorbs it. If further speedup is needed, `aod_median` is the prime suspect — median must retain and sort values across all 55,099 granules, whereas mean/max/count stream.
 - **Wavelength:** The 470nm band (`Optical_Depth_047`) is used rather than the 550nm band because it has better sensitivity to fine-mode aerosols (combustion, vehicle emissions) typical of urban pollution.
 
 ---
@@ -253,7 +288,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 
 **Processing:**
 
-1. **Temporal filtering:** The VIIRS monthly collection is filtered to the 12 months preceding each record's `fieldwork_date`.
+1. **Temporal filtering:** Filtered to a fixed 12-month window per city (2025-07-31 → 2026-07-31), **not** to each record's listing date — see *The analysis window* above.
 
 2. **Temporal composites:** Mean, median, and max radiance images are computed from the monthly series.
 
@@ -262,7 +297,7 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 **Analytical notes:**
 
 - **Interpretation:** Nighttime lights are a well-established proxy for economic activity, infrastructure density, and urbanisation intensity (Henderson et al., 2012). They are **not** a direct measure of business revenue or employment. Use as a neighbourhood-level control variable characterising the economic environment around each business.
-- **Saturation:** VIIRS DNB can saturate in very bright urban cores (radiance > ~200 nW/cm²/sr). For the five MAP2 cities, which include peri-urban and peripheral sampling areas, saturation is unlikely to affect most observations.
+- **Saturation:** VIIRS DNB can saturate in very bright urban cores (radiance > ~200 nW/cm²/sr). For the five MAP2 cities, which include peri-urban and peripheral sampling areas, saturation is unlikely to affect most observations. Observed in the 2026-08-26 run, `ntl_mean_radiance` reached 215 in Addis Ababa (city mean 45.8, range 4.5–215), so a small number of bright-core observations may be near saturation; Jakarta (mean 27.2, range 10–60) and Lagos (mean 23.3, range 6–72) are well clear of it.
 - **Temporal stability:** Nighttime lights at 500m resolution change slowly. The 12-month mean captures the stable economic character of the neighbourhood, smoothing over seasonal effects (e.g., Ramadan, monsoon, holidays).
 - **Gas flaring:** In Lagos, gas flaring from industrial operations can contribute to elevated nighttime radiance in some areas. This is a genuine feature of the economic landscape but should be noted when interpreting high outlier values.
 
@@ -294,3 +329,53 @@ Output of the `cfi-environdata` remote sensing extraction pipeline. Each row cor
 - **Impervious surface and heat:** Built-up surface fraction is a primary driver of the urban heat island effect. It also drives stormwater runoff, connecting this indicator to flood vulnerability — areas with high impervious fraction and low HAND values are at compounded risk.
 - **Temporal reference:** The 2020 epoch is the most recent available in GHSL P2023A. Urban expansion between 2020 and the fieldwork date (2026) will not be captured, though for established urban areas within the sampling frame the difference is likely small.
 - **Relationship to existing data:** The MAP2 sampling grids already contain a `built_share` property per block. The GHSL-derived `builtup_fraction` provides a point-level measure at configurable buffer radii rather than a block-level aggregate, offering finer spatial resolution and consistency across the two buffer scales (50m and 150m).
+
+---
+
+## Missing data
+
+Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is fully populated.
+
+| Column(s) | Missing | Cause |
+|---|---|---|
+| `jrc_recurrence` | 10,970 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
+| `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 24 (0.2%) | One MODIS pixel permanently masked. See below. |
+
+**The 24 masked heat rows.** All 24 are Lagos businesses at 17 distinct coordinates within a ~200 m cluster near 6.5050°N, 3.5780°E — the Lekki/Lagos lagoon fringe — all at 3 m elevation. `lst_valid_obs` is `NaN` rather than `0`, meaning the 1 km MODIS pixel was masked in *every* image across the full two years, not that no hot days occurred.
+
+The coordinates are sound, and the cause is a resolution mismatch rather than bad data:
+
+- SRTM returned a valid 3 m elevation for all 24.
+- MAIAC returned **full AOD data** for the same points (mean `aod_valid_obs` = 96, zero nulls), so the pixel is not masked by every MODIS product.
+- JRC's 30 m mask says `jrc_max_extent = 0` — not water at the point.
+- But all 24 are `hand_flood_vulnerable = 1` and `coastal_lowland = 1`, with mean HAND 1.7 m.
+
+`MOD11A1` is a **land** surface temperature product operating on a 1 km land mask. A business on a narrow strip of land fringed by lagoon reads as land at 30 m but sits inside a 1 km pixel that is majority water. Treat these as structurally missing, not as zeros.
+
+---
+
+## Provenance and reproduction
+
+```bash
+cd python
+python3 prepare_gsmm_input.py    # GSMM exports -> data/input/gsmm_listings.csv
+python3 run_all.py               # 8 indicators -> data/output/all_indicators.csv
+```
+
+**Input.** `prepare_gsmm_input.py` reads the `Business Data` sheet of the latest GSMM export per country from `../cfi-map2r2-data/data/gsmm/`. File choice is by **kind first, then date** — a country team's cleaned `GSMM_Analysis_*` beats the vendor's daily `GSMM_Report_*` even when the Report is newer (ported from `gsmm_snapshot_path()` in that repo's `R/prep_cto.R`; newest-overall would silently swap the study's listing back to the uncleaned vendor file). Rows are de-duplicated on `Enterprise ID`, keeping the first.
+
+Sources used for the 2026-08-26 run:
+
+| City | Source file | Listed | Usable |
+|---|---|---|---|
+| Addis Ababa | `GSMM_Report_20260818_034733_Ethiopia.xlsx` | 4,263 | 4,262 (−1 dup id) |
+| Jakarta | `GSMM_Report_20260818_034736_Indonesia.xlsx` | 3,714 | 3,714 |
+| Lagos | `GSMM_Report_20260824_034726_Nigeria.xlsx` | 3,015 | 3,013 (−2 dup id) |
+
+**Incremental reruns.** `run_all.py` extracts only businesses missing from each indicator's output CSV and reuses the rest, so adding a city or a newer GSMM extract costs only the new rows. Within an indicator, every completed batch is appended to `data/output/.checkpoint_<indicator>.csv` and deleted on success, so an interrupted run also resumes rather than restarting. Buffer indicators checkpoint per radius (`canopy_50m`, `builtup_150m`, …). `--force` ignores all caches; `--only heat,rainfall` runs a subset and skips the merge.
+
+**Cache validity is enforced by a config fingerprint**, recorded per indicator in `data/output/extraction_manifest.json` (git-ignored). The fingerprint covers the config sections that affect that indicator's *values* — so changing `time_window` invalidates heat, rainfall, AOD and nightlights but leaves elevation, flood, canopy and built-up intact, while changing `canopy.buffer_radii_m` invalidates only canopy. When a fingerprint changes, that indicator's cached rows **and** its checkpoint are discarded and it recomputes in full, which is what prevents an output file from silently holding rows computed under two different definitions.
+
+Performance-only keys (`batch_size`, `getinfo_timeout_sec`) are deliberately excluded, so tuning AOD's batch size does not trigger a multi-hour recompute.
+
+**One data-dependent case:** if `time_window.analysis_end_date` is set to `null`, each city's window ends at its own latest listing date, so *adding businesses can move the window* and invalidate every existing row for that city. The fingerprint folds in the per-city maximum listing dates in that mode so the shift is detected. With a fixed `analysis_end_date` (the current setting) this does not arise.

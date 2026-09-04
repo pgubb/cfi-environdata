@@ -23,6 +23,7 @@ config.yaml                  # All configurable parameters
 requirements.txt             # earthengine-api, pandas, geopandas, pyyaml
 python/
   utils.py                   # GEE auth, coordinate loading, batching, export
+  prepare_gsmm_input.py      # Ingest: GSMM listing exports -> data/input/gsmm_listings.csv
   extract_elevation.py       # Indicator 1: SRTM 30m
   extract_heat.py            # Indicator 2: MODIS LST (per fieldwork_date)
   extract_flood.py           # Indicator 3: MERIT Hydro HAND + JRC surface water
@@ -47,10 +48,31 @@ plan.md                      # Implementation plan with design decisions
 
 ## Running the pipelines
 
-**Point-level** (business GPS coordinates):
+**Point-level** (business GPS coordinates). Refresh the input from the latest
+GSMM listing exports first, then extract:
 ```bash
 cd python
+python3 prepare_gsmm_input.py   # rebuilds data/input/gsmm_listings.csv
 python3 run_all.py
+```
+
+`run_all.py` is **incremental**: a rerun extracts only businesses not already in
+each indicator's output CSV, reusing the rest. Adding a city (or a newer GSMM
+extract with more listings) costs only the new businesses, not the whole frame.
+
+Reuse is gated on a **config fingerprint** per indicator, recorded in
+`data/output/extraction_manifest.json`. When settings that affect an indicator's
+*values* change, its cache and checkpoint are discarded and it recomputes in
+full — so a file can never end up holding rows computed under two different
+definitions. Performance-only keys (`batch_size`, `getinfo_timeout_sec`) are
+excluded from the fingerprint, so tuning them does not force a rerun.
+
+Within an indicator, each completed batch is checkpointed, so an interrupted run
+also resumes mid-way. Useful flags:
+
+```bash
+python3 run_all.py --force              # ignore all caches, recompute everything
+python3 run_all.py --only heat,rainfall # run a subset (skips the merge)
 ```
 
 **Block-level** (sampling frame polygons):
@@ -64,9 +86,12 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 ## Key patterns
 
 - **Batching**: All extraction scripts batch GEE API calls via `utils.batch_points()` (default 50 points per call) to avoid GEE memory limits.
+- **GEE resilience**: Never call `.getInfo()` directly — use `utils.safe_getinfo()`, which adds a 300s client-side timeout (a stalled GEE `getInfo()` otherwise blocks forever) and 3 retries with exponential backoff. Every indicator appends each completed batch to `data/output/.checkpoint_{indicator}.csv` via `append_checkpoint()` and filters already-done points with `filter_remaining_points()`, then calls `finish_indicator()` to read the results back and delete the checkpoint. Buffer-based indicators (canopy, built-up) checkpoint per radius, e.g. `canopy_50m`. The same helpers exist in `blocks/utils_blocks.py` for the block pipeline; the two copies should stay in step.
 - **Grouping strategy**: Time-series indicators (heat, nightlights) group by `fieldwork_date` to reuse the same image collection. Coarse-resolution indicators (rainfall at 5.5km, AOD at 1km) group by `city` instead for efficiency.
 - **Buffer-based indicators**: Canopy and built-up compute zonal stats within circular buffers (50m, 150m). Nightlights use a 150m buffer. All others are point samples.
 - **Column naming**: Buffer-dependent columns include the radius suffix (e.g., `canopy_fraction_50m`, `builtup_fraction_150m`).
+- **GSMM ingestion**: `prepare_gsmm_input.py` reads the "Business Data" sheet of the latest export per country from `../cfi-map2r2-data/data/gsmm/`. File choice is by kind first, then date — a country team's cleaned `GSMM_Analysis_*` export beats the vendor's daily `GSMM_Report_*` even when the Report is newer (ported from `gsmm_snapshot_path()` in that repo's `R/prep_cto.R`). Enterprise IDs are unique only *within* a country, so `business_id` is emitted as `<Country>_<Enterprise ID>`, with `country` and `enterprise_id` kept as columns for the join back onto `enum_data`. `fieldwork_date` is the listing date, which arrives either as an Excel serial (Analysis workbooks) or an ISO datetime (vendor exports).
+- **Coordinates are sensitive**: `data/input/gsmm_listings.csv` holds exact business locations and is git-ignored. `data/input/` is otherwise tracked, so never remove that rule, and never copy the file into `cfi-map2r2-data`. Only the derived indicators are safe to share back.
 - **Block pipeline**: Uses the same GEE datasets and config but operates on polygon geometries with zonal reductions (`reduceRegions` with `ee.Reducer.mean`). No buffers or fieldwork dates — blocks use a fixed analysis period and the polygon itself as the analysis unit. Block IDs are prefixed with city name for uniqueness.
 
 ## Related repos

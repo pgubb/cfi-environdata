@@ -6,14 +6,19 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points,
     batch_points, save_output,
+    safe_getinfo, load_checkpoint, append_checkpoint, filter_remaining_points,
+    finish_indicator, BatchProgress, get_city_window,
 )
+
+INDICATOR_NAME = "nightlights"
 
 
 def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Compute mean nighttime radiance within a buffer around each business
     using VIIRS monthly nighttime lights.
 
-    Uses the 12-month period ending at each record's fieldwork_date.
+    Grouped by city, each with one fixed-length window (see
+    utils.get_city_window and the time_window section of config.yaml).
 
     Returns DataFrame with columns:
     - business_id
@@ -25,14 +30,16 @@ def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     gee_cfg = config["gee"]
     buffer_radius = ntl_cfg["buffer_radius_m"]
 
-    all_results = []
+    remaining = filter_remaining_points(
+        df, load_checkpoint(INDICATOR_NAME, config))
+    progress = BatchProgress(len(remaining))
 
-    for date_val, group in df.groupby("fieldwork_date"):
-        end_date = date_val.strftime("%Y-%m-%d")
-        start_date = (date_val - pd.DateOffset(months=ntl_cfg["trailing_months"])).strftime("%Y-%m-%d")
+    for city, city_df in remaining.groupby("city"):
+        start_date, end_date = get_city_window(
+            city_df, config, trailing_months=ntl_cfg["trailing_months"])
 
-        print(f"  Processing nightlights for fieldwork_date={date_val.date()} "
-              f"({len(group)} businesses)...")
+        print(f"  {city}: {len(city_df)} businesses, "
+              f"window {start_date} to {end_date}")
 
         viirs = (
             ee.ImageCollection(ntl_cfg["dataset"])
@@ -51,7 +58,8 @@ def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
             ntl_max.rename("ntl_max_radiance"),
         ])
 
-        for batch in batch_points(group, gee_cfg["batch_size"]):
+        for batch in batch_points(city_df, gee_cfg["batch_size"]):
+            batch_rows = []
             features = []
             for _, row in batch.iterrows():
                 point = ee.Geometry.Point([row["longitude"], row["latitude"]])
@@ -68,16 +76,19 @@ def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 scale=ntl_cfg.get("scale_m", 500),
             )
 
-            for f in sampled.getInfo()["features"]:
+            for f in safe_getinfo(sampled)["features"]:
                 props = f["properties"]
-                all_results.append({
+                batch_rows.append({
                     "business_id": props["business_id"],
                     "ntl_mean_radiance": props.get("ntl_mean_radiance"),
                     "ntl_median_radiance": props.get("ntl_median_radiance"),
                     "ntl_max_radiance": props.get("ntl_max_radiance"),
                 })
 
-    return pd.DataFrame(all_results)
+            append_checkpoint(batch_rows, INDICATOR_NAME, config)
+            progress.update(len(batch))
+
+    return finish_indicator(INDICATOR_NAME, config)
 
 
 def main():

@@ -6,22 +6,32 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points,
     batch_points, save_output,
+    safe_getinfo, load_checkpoint, append_checkpoint, filter_remaining_points,
+    finish_indicator, BatchProgress,
 )
 
 
 def _extract_canopy_at_radius(
     df: pd.DataFrame, tree_mask: ee.Image, radius: int,
-    scale: int, gee_cfg: dict,
+    scale: int, gee_cfg: dict, config: dict,
 ) -> pd.DataFrame:
     """Compute tree cover fraction within a given buffer radius for all points.
 
     Returns DataFrame with columns named with the radius suffix, e.g.
     canopy_fraction_150m, canopy_pixel_count_150m, canopy_tree_pixels_150m.
+
+    Each radius checkpoints under its own name, so an interrupted run resumes
+    at the radius and batch it stopped on rather than redoing both passes.
     """
     suffix = f"{radius}m"
-    all_results = []
+    indicator_name = f"canopy_{suffix}"
 
-    for batch in batch_points(df, gee_cfg["batch_size"]):
+    remaining = filter_remaining_points(
+        df, load_checkpoint(indicator_name, config))
+    progress = BatchProgress(len(remaining), label=f"{suffix} ")
+
+    for batch in batch_points(remaining, gee_cfg["batch_size"]):
+        batch_rows = []
         features = []
         for _, row in batch.iterrows():
             point = ee.Geometry.Point([row["longitude"], row["latitude"]])
@@ -41,16 +51,19 @@ def _extract_canopy_at_radius(
             scale=scale,
         )
 
-        for f in sampled.getInfo()["features"]:
+        for f in safe_getinfo(sampled)["features"]:
             props = f["properties"]
-            all_results.append({
+            batch_rows.append({
                 "business_id": props["business_id"],
                 f"canopy_fraction_{suffix}": props.get("mean"),
                 f"canopy_pixel_count_{suffix}": props.get("count"),
                 f"canopy_tree_pixels_{suffix}": props.get("sum"),
             })
 
-    return pd.DataFrame(all_results)
+        append_checkpoint(batch_rows, indicator_name, config)
+        progress.update(len(batch))
+
+    return finish_indicator(indicator_name, config)
 
 
 def extract_canopy(df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -78,7 +91,7 @@ def extract_canopy(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     for radius in radii:
         print(f"  Buffer radius: {radius}m...")
         radius_df = _extract_canopy_at_radius(
-            df, tree_mask, radius, scale, gee_cfg
+            df, tree_mask, radius, scale, gee_cfg, config
         )
         result = result.merge(radius_df, on="business_id", how="left")
 

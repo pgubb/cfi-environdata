@@ -6,7 +6,11 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points,
     batch_points, save_output,
+    safe_getinfo, load_checkpoint, append_checkpoint, filter_remaining_points,
+    finish_indicator, BatchProgress, get_city_window,
 )
+
+INDICATOR_NAME = "rainfall"
 
 
 def extract_rainfall(df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -22,13 +26,17 @@ def extract_rainfall(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     thresholds = rain_cfg["thresholds_mm"]
     trailing_years = rain_cfg["trailing_years"]
 
-    all_results = []
+    remaining = filter_remaining_points(
+        df, load_checkpoint(INDICATOR_NAME, config))
+    progress = BatchProgress(len(remaining))
 
-    for city, city_df in df.groupby("city"):
-        # Use the widest window that covers all businesses in this city
-        dates = city_df["fieldwork_date"]
-        end_date = dates.max().strftime("%Y-%m-%d")
-        start_date = (dates.min() - pd.DateOffset(years=trailing_years)).strftime("%Y-%m-%d")
+    for city, city_df in remaining.groupby("city"):
+        # Fixed-length window (see utils.get_city_window). Previously this
+        # spanned min(date)-2yr to max(date), which is ~4 weeks LONGER than two
+        # years and differed per city — inflating the *_days_gt* counts and
+        # making them non-comparable across cities.
+        start_date, end_date = get_city_window(
+            city_df, config, trailing_years=trailing_years)
 
         print(f"  {city}: {len(city_df)} businesses, window {start_date} to {end_date}")
 
@@ -58,6 +66,7 @@ def extract_rainfall(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         stacked = ee.Image.cat(bands).rename(band_names)
 
         for batch in batch_points(city_df, gee_cfg["batch_size"]):
+            batch_rows = []
             features = []
             for _, row in batch.iterrows():
                 geom = ee.Geometry.Point([row["longitude"], row["latitude"]])
@@ -72,16 +81,19 @@ def extract_rainfall(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 scale=rain_cfg.get("scale_m", 5566),
             )
 
-            for f in sampled.getInfo()["features"]:
+            for f in safe_getinfo(sampled)["features"]:
                 props = f["properties"]
                 row = {"business_id": props["business_id"]}
                 for bn in band_names:
                     row[bn] = props.get(bn)
                 row["rain_window_start"] = start_date
                 row["rain_window_end"] = end_date
-                all_results.append(row)
+                batch_rows.append(row)
 
-    return pd.DataFrame(all_results)
+            append_checkpoint(batch_rows, INDICATOR_NAME, config)
+            progress.update(len(batch))
+
+    return finish_indicator(INDICATOR_NAME, config)
 
 
 def main():

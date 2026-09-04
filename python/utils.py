@@ -1,11 +1,24 @@
 """Shared utilities for cfi-environdata remote sensing extraction."""
 
+import hashlib
+import json
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import ee
 import pandas as pd
 import yaml
+
+
+# --- GEE resilience settings ---
+# Mirrors blocks/utils_blocks.py. The point pipeline runs tens of thousands of
+# getInfo() calls, so a bare call is the single most likely way for a long run
+# to die.
+GETINFO_TIMEOUT_SEC = 300   # 5 min per request (GEE server limit is ~5 min)
+GETINFO_MAX_RETRIES = 3
+GETINFO_RETRY_BACKOFF = 30  # seconds before first retry, doubling thereafter
 
 
 def load_config(config_path: str = None) -> dict:
@@ -110,3 +123,240 @@ def save_output(df: pd.DataFrame, name: str, config: dict):
     df.to_csv(out_path, index=False)
     print(f"Saved {len(df)} rows to {out_path}")
     return out_path
+
+
+def safe_getinfo(ee_object, timeout=GETINFO_TIMEOUT_SEC,
+                 max_retries=GETINFO_MAX_RETRIES):
+    """Call .getInfo() with a client-side timeout and retry on failure.
+
+    GEE's getInfo() blocks indefinitely if the server stalls, so wrap it in a
+    thread with a timeout and retry transient errors (timeouts, EEException,
+    connection resets). Raises the last error once retries are exhausted.
+    """
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        # NOT `with ThreadPoolExecutor(...)`: the context manager's __exit__
+        # calls shutdown(wait=True), which blocks until the worker finishes —
+        # so a timeout would still wait out the full server-side request and
+        # buy nothing. shutdown(wait=False) abandons the in-flight call
+        # immediately. The worker thread lingers until GEE responds; that is
+        # the price of getInfo() having no cancellation mechanism.
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(ee_object.getInfo)
+            return future.result(timeout=timeout)
+        except FuturesTimeout:
+            last_err = TimeoutError(
+                f"getInfo() timed out after {timeout}s "
+                f"(attempt {attempt}/{max_retries})")
+        except Exception as e:
+            last_err = e
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        if attempt == max_retries:
+            break
+        backoff = GETINFO_RETRY_BACKOFF * (2 ** (attempt - 1))
+        print(f"    [retry] Attempt {attempt}/{max_retries} failed: "
+              f"{last_err}. Retrying in {backoff}s...")
+        time.sleep(backoff)
+
+    raise last_err
+
+
+# --- Checkpoint / resume support ---
+#
+# Each indicator appends every completed batch to a checkpoint CSV in the output
+# directory, so a run killed midway resumes where it stopped instead of
+# restarting from zero. The file is deleted once the indicator finishes.
+# `.checkpoint_*.csv` matches the data/output/*.csv gitignore rule.
+
+def _checkpoint_path(indicator_name: str, config: dict) -> Path:
+    """Return the path for an indicator's checkpoint CSV."""
+    out_dir = Path(__file__).parent.parent / config["output_dir"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f".checkpoint_{indicator_name}.csv"
+
+
+def load_checkpoint(indicator_name: str, config: dict,
+                    verbose: bool = True) -> pd.DataFrame | None:
+    """Load an indicator's partial results, or None if there is no checkpoint."""
+    cp = _checkpoint_path(indicator_name, config)
+    if not cp.exists():
+        return None
+    df = pd.read_csv(cp)
+    df["business_id"] = df["business_id"].astype(str)
+    if verbose and len(df):
+        print(f"  Resuming from checkpoint: {len(df):,} points already done")
+    return df
+
+
+def append_checkpoint(rows: list[dict], indicator_name: str, config: dict):
+    """Append a batch of result rows to the checkpoint CSV."""
+    if not rows:
+        return
+    cp = _checkpoint_path(indicator_name, config)
+    pd.DataFrame(rows).to_csv(cp, mode="a", header=not cp.exists(), index=False)
+
+
+def clear_checkpoint(indicator_name: str, config: dict):
+    """Remove the checkpoint file after the indicator completes."""
+    cp = _checkpoint_path(indicator_name, config)
+    if cp.exists():
+        cp.unlink()
+
+
+def filter_remaining_points(df: pd.DataFrame,
+                            checkpoint_df: pd.DataFrame | None) -> pd.DataFrame:
+    """Return only the points not already recorded in the checkpoint."""
+    if checkpoint_df is None or checkpoint_df.empty:
+        return df
+    done = set(checkpoint_df["business_id"].astype(str))
+    remaining = df[~df["business_id"].astype(str).isin(done)]
+    print(f"  {len(remaining):,} of {len(df):,} points remaining")
+    return remaining
+
+
+def finish_indicator(indicator_name: str, config: dict) -> pd.DataFrame:
+    """Read back an indicator's full results and clear its checkpoint."""
+    final_df = load_checkpoint(indicator_name, config, verbose=False)
+    clear_checkpoint(indicator_name, config)
+    if final_df is None:
+        return pd.DataFrame()
+    return final_df
+
+
+class BatchProgress:
+    """Prints one line per completed batch so a long run is observable."""
+
+    def __init__(self, total_points: int, label: str = ""):
+        self.total = total_points
+        self.done = 0
+        self.label = label
+        self.started = time.time()
+
+    def update(self, n: int):
+        self.done += n
+        elapsed = time.time() - self.started
+        rate = self.done / elapsed if elapsed > 0 else 0
+        eta = (self.total - self.done) / rate if rate > 0 else 0
+        pct = 100 * self.done / self.total if self.total else 100
+        print(f"    {self.label}{self.done:,}/{self.total:,} ({pct:.1f}%) "
+              f"| {rate:.0f} pts/s | ETA {eta/60:.1f} min", flush=True)
+
+
+def get_city_window(city_df: pd.DataFrame, config: dict,
+                    trailing_years: int = None,
+                    trailing_months: int = None) -> tuple[str, str]:
+    """Return (start_date, end_date) for one city's time-series window.
+
+    The window is a FIXED length — exactly `trailing_years` or `trailing_months`
+    back from the end date — so every city and every indicator spans the same
+    number of days. The `*_days_gt*` columns are counts, so an unequal window
+    length would silently inflate one city's count relative to another's.
+
+    The end date is `time_window.analysis_end_date` from config. Set that to
+    null to anchor each city at its own latest fieldwork date instead (lengths
+    stay equal; the calendar period becomes city-specific).
+    """
+    if (trailing_years is None) == (trailing_months is None):
+        raise ValueError("Pass exactly one of trailing_years / trailing_months")
+
+    configured_end = config.get("time_window", {}).get("analysis_end_date")
+    end = (pd.Timestamp(configured_end) if configured_end
+           else city_df["fieldwork_date"].max())
+
+    offset = (pd.DateOffset(years=trailing_years) if trailing_years is not None
+              else pd.DateOffset(months=trailing_months))
+    start = end - offset
+    return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+
+# --- Incremental extraction: config fingerprints -----------------------------
+#
+# An indicator's cached output can be REUSED for businesses already in it, but
+# only while the settings that produced it are unchanged. A fingerprint of the
+# config that actually affects each indicator's VALUES is stored alongside the
+# output; when it changes, the cache and checkpoint are discarded and the
+# indicator recomputes in full.
+#
+# Without this, changing (say) the analysis window would leave a mix of rows
+# computed under old and new semantics in one file, which is worse than an
+# obvious full recompute because nothing looks wrong.
+
+# Config sections whose values feed each indicator.
+INDICATOR_CONFIG_KEYS = {
+    "elevation":   ["elevation"],
+    "heat":        ["heat", "time_window"],
+    "flood":       ["flood", "elevation"],   # elevation feeds the coastal flag
+    "canopy":      ["canopy"],
+    "rainfall":    ["rainfall", "time_window"],
+    "airquality":  ["airquality", "time_window"],
+    "nightlights": ["nightlights", "time_window"],
+    "builtup":     ["builtup"],
+}
+
+# Indicators whose window depends on the data when analysis_end_date is null.
+TIME_SERIES_INDICATORS = {"heat", "rainfall", "airquality", "nightlights"}
+
+# Keys that affect only speed, never results. Tuning these must NOT invalidate
+# a cache — otherwise raising a batch size silently forces a multi-hour rerun.
+PERFORMANCE_ONLY_KEYS = {"batch_size", "getinfo_timeout_sec"}
+
+# Indicators sampling at gee.default_scale_m rather than their own scale_m.
+_USES_DEFAULT_SCALE = {"elevation", "flood"}
+
+
+def _strip_perf_keys(obj):
+    """Recursively drop performance-only keys so tuning them keeps the cache."""
+    if isinstance(obj, dict):
+        return {k: _strip_perf_keys(v) for k, v in sorted(obj.items())
+                if k not in PERFORMANCE_ONLY_KEYS}
+    if isinstance(obj, list):
+        return [_strip_perf_keys(v) for v in obj]
+    return obj
+
+
+def indicator_fingerprint(name: str, config: dict, df: pd.DataFrame) -> str:
+    """Stable hash of everything that affects this indicator's output values."""
+    payload = {k: _strip_perf_keys(config.get(k))
+               for k in INDICATOR_CONFIG_KEYS.get(name, [name])}
+
+    if name in _USES_DEFAULT_SCALE:
+        payload["_default_scale_m"] = config.get("gee", {}).get("default_scale_m")
+
+    # When analysis_end_date is null each city's window ends at its own latest
+    # listing date, so ADDING BUSINESSES CAN MOVE THE WINDOW and invalidate
+    # every existing row for that city. Fold the per-city max dates in so that
+    # shift is detected instead of silently mixing two windows in one file.
+    tw = config.get("time_window", {}) or {}
+    if name in TIME_SERIES_INDICATORS and not tw.get("analysis_end_date"):
+        payload["_city_max_dates"] = {
+            str(city): str(pd.Timestamp(g["fieldwork_date"].max()).date())
+            for city, g in df.groupby("city")
+        }
+
+    blob = json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _manifest_path(config: dict) -> Path:
+    out_dir = Path(__file__).parent.parent / config["output_dir"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / "extraction_manifest.json"
+
+
+def load_manifest(config: dict) -> dict:
+    """Read the per-indicator fingerprint/row-count record."""
+    mp = _manifest_path(config)
+    if not mp.exists():
+        return {}
+    try:
+        return json.loads(mp.read_text())
+    except (json.JSONDecodeError, OSError):
+        print("  ! extraction_manifest.json unreadable; treating as absent")
+        return {}
+
+
+def save_manifest(manifest: dict, config: dict):
+    _manifest_path(config).write_text(json.dumps(manifest, indent=2, sort_keys=True))

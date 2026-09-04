@@ -2,7 +2,10 @@
 # ============================================================
 
 # Input / output paths
-input_file: "data/input/synthetic_businesses.csv"
+# Built by python/prepare_gsmm_input.py from the GSMM listing exports (see the
+# gsmm section at the foot of this file). Was data/input/synthetic_businesses.csv,
+# the 200-row synthetic fixture — switch back to it for a dry run.
+input_file: "data/input/gsmm_listings.csv"
 output_dir: "data/output"
 
 # Required input columns
@@ -66,7 +69,16 @@ canopy:
 
 # ---------- Indicator 5: Rainfall ----------
 rainfall:
-  dataset: "UCSB-CHG/CHIRPS/DAILY"
+  # CHIRPS v3 daily, "sat" variant. Was UCSB-CHG/CHIRPS/DAILY (v2.0 Final).
+  # NOT satellite-only: it partitions station-blended PENTADAL CHIRPS-v3 totals
+  # into daily amounts using NASA IMERG Late V07. Station data still informs the
+  # pentad totals; only the daily disaggregation is satellite-driven.
+  # This asset holds 10,439 images starting 1998-01-01 (the catalog page quotes
+  # 1981 for the CHIRPS family) — immaterial here, the window is 2 trailing
+  # years. Same band and 5566m grid as v2, so no column or scale changes.
+  # Both v2 and v3 end 2026-07-31, ~2 weeks before the last fieldwork date;
+  # rain_valid_obs records the actual image count per point.
+  dataset: "UCSB-CHC/CHIRPS/V3/DAILY_SAT"
   band: "precipitation"
   trailing_years: 2
   # Daily precipitation thresholds (mm) for day-count indicators
@@ -85,6 +97,18 @@ airquality:
   # AOD thresholds: 0.4 = moderate, 0.8 = high, 1.5 = very high
   # These roughly correspond to PM2.5 of ~35, ~70, ~130 µg/m³
   thresholds_aod: [0.4, 0.8, 1.5]
+  # --- Per-indicator overrides (this indicator only) ---
+  # MCD19A2 is a GRANULE collection, so a request's cost is dominated by the
+  # collection reduction and is nearly INDEPENDENT of how many points it
+  # carries. Measured on Addis: 10 pts 167s, 200 pts 167s, 1000 pts 280s.
+  # So batch as large as will complete — 11 requests instead of 220. Smaller
+  # batches are strictly worse here, which is the opposite of the usual advice
+  # and the opposite of what gee.batch_size is tuned for.
+  batch_size: 1000
+  # Typical request runs 170-280s, so the global 300s timeout leaves no
+  # headroom. Failures are GEE-side variance, not a payload limit (500 pts
+  # failed while 1000 succeeded), so give it room and let the retry handle it.
+  getinfo_timeout_sec: 600
 
 # ---------- Indicator 7: Nighttime Lights ----------
 nightlights:
@@ -104,6 +128,30 @@ builtup:
   band: "built_surface"
   buffer_radii_m: [50, 150]
   scale_m: 10
+
+# ---------- Time-series analysis window ----------
+# Heat, rainfall, air quality and nightlights each reduce an image collection
+# over a trailing window, then sample the result at each point.
+#
+# GROUPING IS BY CITY, not by fieldwork_date. Two listings a week apart share
+# >99% of a 2-year window, and at MODIS/CHIRPS resolution (1km / 5.5km) the
+# per-date precision buys nothing — it just rebuilds the same expensive
+# reduction ~10x more often (29 distinct listing dates vs 3 cities).
+#
+# THE WINDOW IS A FIXED LENGTH ending at analysis_end_date, so every city and
+# every indicator covers exactly the same span. This matters because the
+# `*_days_gt*` columns are COUNTS: a window that is 4 weeks longer mechanically
+# yields a higher count, so variable-length windows silently confound any
+# cross-city comparison.
+#
+# 2026-07-31 is the last date with complete CHIRPS v3 coverage. Fieldwork runs
+# to 2026-08-15, so the final ~2 weeks are excluded deliberately: including them
+# would give rainfall no data while the other indicators had some.
+#
+# Set analysis_end_date to null to anchor each city at its own latest fieldwork
+# date instead (still equal lengths, but city-specific end dates).
+time_window:
+  analysis_end_date: "2026-07-31"
 
 # ---------- GEE Processing ----------
 gee:
@@ -135,3 +183,43 @@ blocks:
   # Batch size — blocks are simple rectangles so can handle larger batches
   # than the point pipeline. Larger batches = fewer GEE API round-trips.
   batch_size: 100
+
+# ---------- GSMM Listing Ingestion ----------
+# Builds data/input/gsmm_listings.csv from the GSMM enumeration exports held in
+# the cfi-map2r2-data repo. Run `python3 prepare_gsmm_input.py` before run_all.py.
+gsmm:
+  # GSMM exports live in the analysis repo (itself a copy of the cfi-map2-admin
+  # datastore, which is the source of truth). See its data/README.md.
+  source_dir: "../cfi-map2r2-data/data/gsmm"
+  # Output CSV. GIT-IGNORED: it carries exact business coordinates, which are
+  # marked sensitive in the study's crosswalk and must not be committed.
+  output_file: "data/input/gsmm_listings.csv"
+  # Sheet holding one row per listed business
+  sheet: "Business Data"
+  # File-kind preference, highest first, then newest date WITHIN a kind. A
+  # country team's cleaned "Analysis" export wins over the vendor's daily
+  # "Report" export even when the Report is newer — matching gsmm_snapshot_path()
+  # in cfi-map2r2-data/R/prep_cto.R. Newest-overall would silently swap the
+  # study's listing back to the uncleaned vendor file.
+  file_prefixes: ["GSMM_Analysis", "GSMM_Report"]
+  # Source column names in the Business Data sheet
+  columns:
+    id: "Enterprise ID"
+    lat: "Latitude"
+    lon: "Longitude"
+    date: "Date time"
+    city: "City"
+  # Country -> city. Enterprise IDs are unique only WITHIN a country (5 ids are
+  # reused across countries), so business_id is emitted as
+  # "<Country>_<Enterprise ID>" and country/enterprise_id are kept as columns
+  # for the join back onto enum_data.
+  country_city_map:
+    Brazil: "Sao Paulo"
+    Ethiopia: "Addis Ababa"
+    India: "Delhi"
+    Indonesia: "Jakarta"
+    Nigeria: "Lagos"
+  # Restrict the ingest to a subset of countries. Set to null (or delete) to
+  # include all five; override per-run with `--countries Brazil,India`.
+  # CURRENTLY A TEST SUBSET: Lagos / Jakarta / Addis Ababa only.
+  include_countries: ["Ethiopia", "Indonesia", "Nigeria"]
