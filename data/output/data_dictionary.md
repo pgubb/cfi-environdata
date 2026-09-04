@@ -1,6 +1,6 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 52 columns: 7 passthrough from the input, 45 GEE-derived.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 60 columns: 7 passthrough from the input, 47 GEE-derived, and 6 derived exceedance rates.
 
 **Last generated:** 2026-09-04 (indicators 1-8 extracted 2026-08-26), 10,989 businesses across Addis Ababa (4,262), Jakarta (3,714) and Lagos (3,013). This was a three-city test run — Brazil and India were excluded via `gsmm.include_countries` in `config.yaml`. The full five-city frame is 20,124 listings.
 
@@ -59,6 +59,9 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | `heat_days_gt40c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 40°C. |
 | `heat_days_gt45c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 45°C. |
 | `heat_days_gt50c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 50°C. |
+| `heat_frac_gt40c` | float | proportion (0–1) | **Share of OBSERVED days** exceeding 40°C = `heat_days_gt40c / lst_valid_obs`. **Use this, not the raw count, for any cross-city comparison.** |
+| `heat_frac_gt45c` | float | proportion (0–1) | Share of observed days exceeding 45°C. |
+| `heat_frac_gt50c` | float | proportion (0–1) | Share of observed days exceeding 50°C. |
 | `lst_mean_c` | float | °C | Mean daytime land surface temperature across all valid observations in the trailing 2-year window. |
 | `lst_max_c` | float | °C | Maximum daytime land surface temperature observed in the trailing 2-year window. |
 | `lst_valid_obs` | integer | count of days | Number of clear-sky (non-masked) MODIS observations at the point within the trailing 2-year window. |
@@ -235,6 +238,9 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | `aod_days_gt0p4` | integer | count of days | Number of days in the trailing 2-year window where AOD at 470nm exceeded 0.4 (moderate pollution). |
 | `aod_days_gt0p8` | integer | count of days | Number of days where AOD exceeded 0.8 (high pollution). |
 | `aod_days_gt1p5` | integer | count of days | Number of days where AOD exceeded 1.5 (very high / hazardous pollution). |
+| `aod_frac_gt0p4` | float | proportion (0–1) | **Share of OBSERVED days** exceeding AOD 0.4 = `aod_days_gt0p4 / aod_valid_obs`. **Use this, not the raw count** — the two give opposite city rankings (see below). |
+| `aod_frac_gt0p8` | float | proportion (0–1) | Share of observed days exceeding AOD 0.8. |
+| `aod_frac_gt1p5` | float | proportion (0–1) | Share of observed days exceeding AOD 1.5. |
 | `aod_mean` | float | dimensionless | Mean AOD at 470nm across all valid observations in the trailing 2-year window. |
 | `aod_max` | float | dimensionless | Maximum AOD observed in the trailing 2-year window. |
 | `aod_median` | float | dimensionless | Median AOD in the trailing 2-year window. Less sensitive to extreme events than the mean. |
@@ -423,6 +429,38 @@ Practical guidance:
 
 ---
 
+## Derived exceedance rates (`*_frac_gt*`)
+
+Computed after the merge in `run_all.py` (`utils.add_exceedance_rates`) as pure client-side arithmetic on already-extracted columns. They are **not** in the per-indicator CSVs (`heat.csv`, `airquality.csv`) — only in `all_indicators.csv` — and are recomputed every run, so they cannot go stale.
+
+**Why they exist.** The `*_days_gt*` columns count exceedances *among days that were observed*, and cloud masking makes that denominator vary enormously. Over the same 730-day window:
+
+| City | `lst_valid_obs` | `aod_valid_obs` |
+|---|---|---|
+| Addis Ababa | 404 | 347 |
+| Jakarta | 86 | 202 |
+| Lagos | 40 | 91 |
+
+A 10x range for MODIS LST. Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis Ababa's `0` means "0 of ~404".
+
+**This reverses conclusions, it does not merely adjust them.** Ranking the cities by air-pollution exceedance:
+
+| Measure | Ranking |
+|---|---|
+| `aod_days_gt0p4` (raw count) | Jakarta (116) > Addis Ababa (93) > Lagos (69) |
+| `aod_frac_gt0p4` (rate) | **Lagos (77.0%) > Jakarta (57.4%) > Addis Ababa (26.0%)** |
+
+Lagos moves from last to first. The rate ranking is the correct one, corroborated independently by `aod_mean` (Lagos 0.648 > Jakarta 0.480 > Addis Ababa 0.306), which needs no normalisation. Comparing raw AOD day-counts across these cities would say Lagos has the cleanest air of the three — the opposite of the truth.
+
+**Deliberately absent:**
+
+- **No rainfall rates.** CHIRPS is gap-filled rather than cloud-masked, so `rain_valid_obs` is exactly 730 for every row; a fraction would be a constant rescaling carrying no information, and `rain_days_gt*` are already directly comparable.
+- **Not annualised.** `fraction x 365` would read as "expected days per year" but extrapolates the clear-sky exceedance rate onto cloudy days, which are systematically cooler and less polluted — overstating exposure most in the cloudiest cities, reintroducing the same bias less visibly.
+
+**Missing values.** A rate is `NaN` where the observation count is zero or missing, never 0: an unobserved point has an undefined rate, not a rate of zero. This affects the same 24 Lagos businesses whose MODIS pixel is permanently masked.
+
+---
+
 ## Missing data
 
 Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is fully populated.
@@ -431,8 +469,10 @@ Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is f
 |---|---|---|
 | `jrc_recurrence` | 10,970 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
 | `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 24 (0.2%) | One MODIS pixel permanently masked. See below. |
+| `heat_frac_gt40c`, `heat_frac_gt45c`, `heat_frac_gt50c` | 24 (0.2%) | Derived from the masked heat columns above. |
 | `pop_density_50m` | 101 (0.9%) | WorldPop unmapped on the North Jakarta coast. See below. |
 | `pop_density_150m` | 28 (0.25%) | Same cause; the wider buffer recovers 73 of the 101. |
+| `hrsl_density_50m` | 13 (0.1%) | HRSL has no value at 13 points (10 Addis Ababa, 3 Jakarta); these do not overlap the WorldPop gaps. `hrsl_density_150m` has **no** missing values. |
 
 **The 24 masked heat rows.** All 24 are Lagos businesses at 17 distinct coordinates within a ~200 m cluster near 6.5050°N, 3.5780°E — the Lekki/Lagos lagoon fringe — all at 3 m elevation. `lst_valid_obs` is `NaN` rather than `0`, meaning the 1 km MODIS pixel was masked in *every* image across the full two years, not that no hot days occurred.
 

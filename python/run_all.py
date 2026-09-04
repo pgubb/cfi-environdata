@@ -16,6 +16,7 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points, save_output,
     indicator_fingerprint, load_manifest, save_manifest, clear_checkpoint,
+    add_exceedance_rates,
 )
 
 # Indicator name -> (banner, module, function). Order is the run order.
@@ -171,6 +172,10 @@ def main():
             raise RuntimeError(
                 f"Merging '{name}' changed the row count {before:,} -> "
                 f"{len(merged):,}; its business_id values are not unique.")
+
+    # Derived columns, recomputed from the merged frame on every run (pure
+    # client-side arithmetic, so they never need a cache of their own).
+    merged = add_exceedance_rates(merged)
 
     save_output(merged, "all_indicators", config)
 

@@ -362,3 +362,52 @@ def load_manifest(config: dict) -> dict:
 
 def save_manifest(manifest: dict, config: dict):
     _manifest_path(config).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+
+
+# --- Derived exceedance rates ---------------------------------------------
+#
+# The `*_days_gt*` columns are counts of days exceeding a threshold AMONG DAYS
+# THAT WERE OBSERVED. Cloud masking makes that denominator vary enormously
+# between cities — measured over a 730-day window, mean valid observations run
+# 404 (Addis Ababa) to 40 (Lagos) for MODIS LST, and 347 to 91 for MAIAC AOD.
+# So a raw count of 0 for Lagos ("0 of ~40 observed days") is not comparable
+# with 0 for Addis Ababa ("0 of ~404"), and the city with the LOWER raw count
+# can have the HIGHER exceedance rate.
+#
+# These fractions normalise by each point's own observation count, which is
+# what makes the indicator comparable across cities.
+#
+# Rainfall is deliberately NOT included: CHIRPS is gap-filled rather than
+# cloud-masked, so rain_valid_obs is exactly 730 everywhere and a fraction
+# would be a constant rescaling carrying no extra information.
+RATE_DENOMINATORS = {
+    "heat_days_gt": "lst_valid_obs",
+    "aod_days_gt": "aod_valid_obs",
+}
+
+
+def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
+    """Add `*_frac_gt*` columns beside each `*_days_gt*` count.
+
+    Each is the share of that point's OBSERVED days exceeding the threshold,
+    in [0, 1]. NaN where the observation count is zero or missing — a point
+    with no observations has an undefined rate, not a rate of zero.
+
+    Deliberately NOT annualised (e.g. fraction x 365). That would extrapolate
+    the clear-sky exceedance rate to cloudy days, which are systematically
+    cooler and less polluted, and would overstate exposure most in exactly the
+    cloudiest cities.
+    """
+    out = merged.copy()
+    for prefix, denom_col in RATE_DENOMINATORS.items():
+        if denom_col not in out.columns:
+            continue
+        denom = out[denom_col].where(out[denom_col] > 0)  # 0 and NaN -> NaN
+        for col in [c for c in merged.columns if c.startswith(prefix)]:
+            rate_col = col.replace("_days_gt", "_frac_gt")
+            values = out[col] / denom
+            if rate_col in out.columns:
+                out[rate_col] = values
+            else:
+                out.insert(out.columns.get_loc(col) + 1, rate_col, values)
+    return out

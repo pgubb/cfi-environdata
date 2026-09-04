@@ -6,8 +6,6 @@ FeatureCollections, and provides batching helpers for zonal reductions.
 
 import json
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from pathlib import Path
 
 import ee
@@ -16,7 +14,16 @@ import pandas as pd
 
 # Allow imports from parent package (python/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import load_config, init_gee, save_output  # noqa: E402
+# safe_getinfo and its settings are re-exported from the point pipeline's utils
+# rather than duplicated here. This file previously carried its own copy, which
+# drifted: its `with ThreadPoolExecutor(...)` blocked in __exit__ until the
+# worker finished, so a "timeout" still waited out the full server-side request
+# before retrying, and it slept the backoff even after the final attempt. One
+# definition means one place to fix.
+from utils import (  # noqa: E402,F401
+    load_config, init_gee, save_output, safe_getinfo,
+    GETINFO_TIMEOUT_SEC, GETINFO_MAX_RETRIES, GETINFO_RETRY_BACKOFF,
+)
 
 
 # Country directory name → city name
@@ -27,44 +34,6 @@ DEFAULT_COUNTRY_CITY_MAP = {
     "Indonesia": "Jakarta",
     "Nigeria": "Lagos",
 }
-
-# --- GEE resilience settings ---
-GETINFO_TIMEOUT_SEC = 300   # 5 min per request (GEE server limit is ~5 min)
-GETINFO_MAX_RETRIES = 3
-GETINFO_RETRY_BACKOFF = 30  # seconds between retries (grows by 2x each attempt)
-
-
-def safe_getinfo(ee_object, timeout=GETINFO_TIMEOUT_SEC,
-                 max_retries=GETINFO_MAX_RETRIES):
-    """Call .getInfo() with a client-side timeout and retry on failure.
-
-    GEE's getInfo() blocks indefinitely if the server stalls. This wraps
-    it in a thread with a timeout and retries on transient errors (timeout,
-    EEException, connection errors).
-
-    Returns the getInfo() result, or raises after max_retries.
-    """
-    last_err = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(ee_object.getInfo)
-                result = future.result(timeout=timeout)
-            return result
-        except FuturesTimeout:
-            last_err = TimeoutError(
-                f"getInfo() timed out after {timeout}s (attempt {attempt}/{max_retries})"
-            )
-        except Exception as e:
-            last_err = e
-
-        backoff = GETINFO_RETRY_BACKOFF * (2 ** (attempt - 1))
-        print(f"    [retry] Attempt {attempt}/{max_retries} failed: {last_err}. "
-              f"Retrying in {backoff}s...")
-        time.sleep(backoff)
-
-    raise last_err
-
 
 def load_blocks(config: dict) -> gpd.GeoDataFrame:
     """Load all block polygons from GeoJSON files.
