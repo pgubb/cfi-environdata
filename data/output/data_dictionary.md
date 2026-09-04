@@ -2,7 +2,9 @@
 
 Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 60 columns: 7 passthrough from the input, 47 GEE-derived, and 6 derived exceedance rates.
 
-**Last generated:** 2026-09-04 (indicators 1-8 extracted 2026-08-26), 10,989 businesses across Addis Ababa (4,262), Jakarta (3,714) and Lagos (3,013). This was a three-city test run — Brazil and India were excluded via `gsmm.include_countries` in `config.yaml`. The full five-city frame is 20,124 listings.
+**Last generated:** 2026-09-04, 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
+
+**Input provenance changed 2026-09-04.** The pipeline now consumes `cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv` rather than reading the raw GSMM `.xlsx` exports itself. That repo owns every preparation and cleaning step — authoritative export selection, de-duplication, date parsing, decimal normalisation — so those rules live in one place instead of being reimplemented here. Validation of the switch: for the 10,989 businesses extracted under the old path, the prepared coordinates are byte-identical (max difference 0.00000000) with all listing dates matching.
 
 > **These rows carry exact business coordinates.** `data/input/gsmm_listings.csv` and any file derived from it are git-ignored and must not be copied into `cfi-map2r2-data`. Only the derived indicator columns are safe to share back — they describe the neighbourhood, not the address. See the header of `cfi-map2r2-data/R/prep_enumeration.R`.
 
@@ -467,9 +469,9 @@ Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is f
 
 | Column(s) | Missing | Cause |
 |---|---|---|
-| `jrc_recurrence` | 10,970 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
-| `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 24 (0.2%) | One MODIS pixel permanently masked. See below. |
-| `heat_frac_gt40c`, `heat_frac_gt45c`, `heat_frac_gt50c` | 24 (0.2%) | Derived from the masked heat columns above. |
+| `jrc_recurrence` | 11,449 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
+| `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 25 (0.2%) | One MODIS pixel permanently masked. See below. |
+| `heat_frac_gt40c`, `heat_frac_gt45c`, `heat_frac_gt50c` | 25 (0.2%) | Derived from the masked heat columns above. |
 | `pop_density_50m` | 101 (0.9%) | WorldPop unmapped on the North Jakarta coast. See below. |
 | `pop_density_150m` | 28 (0.25%) | Same cause; the wider buffer recovers 73 of the 101. |
 | `hrsl_density_50m` | 13 (0.1%) | HRSL has no value at 13 points (10 Addis Ababa, 3 Jakarta); these do not overlap the WorldPop gaps. `hrsl_density_150m` has **no** missing values. |
@@ -520,3 +522,25 @@ Sources used for the 2026-08-26 run:
 Performance-only keys (`batch_size`, `getinfo_timeout_sec`) are deliberately excluded, so tuning AOD's batch size does not trigger a multi-hour recompute.
 
 **One data-dependent case:** if `time_window.analysis_end_date` is set to `null`, each city's window ends at its own latest listing date, so *adding businesses can move the window* and invalidate every existing row for that city. The fingerprint folds in the per-city maximum listing dates in that mode so the shift is detected. With a fixed `analysis_end_date` (the current setting) this does not arise.
+
+
+---
+
+## Registry for the analysis app
+
+`registry_environment.R` at the root of this repo holds drop-in registry rows for `cfi-map2r2-data`, matching its `R/registry.R` tribble schema (`id, label, domain, type, source_q, source_col, notes, description`, then `frame = "Enumeration"`). 46 indicators across 9 domains (`env_heat`, `env_air`, `env_flood`, `env_green`, `env_rain`, `env_light`, `env_built`, `env_pop`, `env_terrain`).
+
+It is **generated** by `python/make_registry.py`, which fails if any column of `all_indicators.csv` is neither registered nor explicitly excluded — so it cannot drift as indicators are added. Regenerate after any column change; do not hand-edit the `.R` file.
+
+To use, after sourcing `registry.R`:
+
+```r
+source("registry_environment.R")
+REGISTRY <- bind_rows(REGISTRY, REGISTRY_ENVIRONMENT)
+```
+
+Three things to settle before merging it there:
+
+1. **ID convention.** Enumeration-frame ids in `registry.R` are prefixed `enum_`; these are not, because the id must match the column name in `all_indicators.csv`, which this pipeline's data dictionary fixes. Renaming on import would work but breaks that correspondence.
+2. **New domains.** The nine `env_*` domains are new to that registry.
+3. **`latitude` / `longitude` are deliberately unregistered** as sensitive — they must never reach `enum_snapshot.rds`, which is committed and shipped to the deployed app.

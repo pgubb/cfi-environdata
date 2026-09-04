@@ -1,23 +1,25 @@
-"""Build the point-pipeline input CSV from the GSMM enumeration exports.
+"""Build the point-pipeline input CSV from cfi-map2r2-data's prepared coordinates.
 
-The GSMM business listing is the census of business LOCATIONS: every listed
-business has coordinates, whether or not it was ever selected or interviewed.
-Extracting environmental indicators once per listing therefore covers the
-interviewed sample as a by-product and keeps ONE environmental value per
-business. (Rationale in cfi-map2r2-data/R/prep_enumeration.R.)
+That repo is the single source of truth for GSMM preparation and cleaning: it
+picks the authoritative export per country, de-duplicates on Enterprise ID,
+parses dates and normalises decimals, then writes one tidy coordinate file.
+This script only adapts that file to the pipeline's input contract — it does no
+cleaning of its own, deliberately, so those rules cannot drift between repos.
 
-Reads the "Business Data" sheet of the latest export per country from
-`gsmm.source_dir` and writes `gsmm.output_file` with the column names
-`run_all.py` expects: business_id, latitude, longitude, fieldwork_date, city.
+Its one substantive job is the KEY. The source `business_id` is the bare GSMM
+Enterprise ID, which is unique only *within* a country — five ids appear in two
+cities each — while `run_all.py` merges every indicator on `business_id` alone.
+A bare id would silently give two businesses one set of indicator values. The
+key is therefore rewritten as "<Country>_<Enterprise ID>", with the raw id kept
+as `enterprise_id` for the country+enterprise_id join back onto `enum_data`.
 
     cd python && python3 prepare_gsmm_input.py
 
 The output carries exact business coordinates and is git-ignored. Do not commit
-it, and do not copy it into cfi-map2r2-data.
+it, and do not copy it back into cfi-map2r2-data.
 """
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
@@ -27,181 +29,82 @@ from utils import load_config
 
 REPO_ROOT = Path(__file__).parent.parent
 
-# Excel stores dates as days since this epoch (the 1900 date system, offset by
-# Excel's phantom 1900 leap day).
-EXCEL_EPOCH = "1899-12-30"
 
-
-def gsmm_snapshot_path(country: str, source_dir: Path,
-                       prefixes: list[str]) -> Path | None:
-    """The export this study analyses for `country`, or None if it has none.
-
-    Preference is by KIND first, then newest date within that kind — a port of
-    gsmm_snapshot_path() in cfi-map2r2-data/R/prep_cto.R. The vendor's
-    GSMM_Report is refreshed daily and would otherwise overtake a country team's
-    cleaned GSMM_Analysis dataset that is a few days older but authoritative.
-    """
-    for prefix in prefixes:
-        pattern = re.compile(rf"^{re.escape(prefix)}_.*_{re.escape(country)}\.xlsx$")
-        files = [p for p in source_dir.glob(f"{prefix}_*_{country}.xlsx")
-                 if pattern.match(p.name) and not p.name.startswith("~$")]
-        dated = [(m.group(), p) for p in files
-                 if (m := re.search(r"\d{8}", p.name))]
-        if dated:
-            return max(dated)[1]
-    return None
-
-
-def _to_number(s: pd.Series) -> pd.Series:
-    """Numeric from GSMM text, tolerating the comma decimal separator."""
-    return pd.to_numeric(
-        s.astype(str).str.strip().str.replace(",", ".", regex=False),
-        errors="coerce")
-
-
-def _to_listing_date(s: pd.Series) -> pd.Series:
-    """Whole-day dates from GSMM's "Date time", which arrives in two formats.
-
-    The cleaned Analysis workbooks have been round-tripped through Excel and
-    carry serial numbers ("46244.6666"); the vendor's exports carry datetime
-    cells that pandas reads as ISO strings. Both appear in the same folder, so
-    handle each per row rather than per file.
-    """
-    text = s.astype(str).str.strip()
-    serial = pd.to_numeric(text, errors="coerce")
-
-    out = pd.Series(pd.NaT, index=text.index, dtype="datetime64[ns]")
-    is_serial = serial.notna()
-    if is_serial.any():
-        # Floor to whole days before converting, matching R's .excel_date().
-        out.loc[is_serial] = pd.to_datetime(
-            serial[is_serial].astype(float).round(6) // 1,
-            unit="D", origin=EXCEL_EPOCH)
-    if (~is_serial).any():
-        out.loc[~is_serial] = pd.to_datetime(
-            text[~is_serial], errors="coerce", format="mixed")
-    return out.dt.normalize()
-
-
-def read_country_listings(country: str, path: Path, config: dict) -> pd.DataFrame:
-    """One row per listed business in `country`, ready to concatenate."""
+def load_prepared_coords(config: dict) -> pd.DataFrame:
+    """Read and validate the prepared coordinate file."""
     gsmm = config["gsmm"]
     cols = gsmm["columns"]
-    city = gsmm["country_city_map"][country]
+    src = (REPO_ROOT / gsmm["source_file"]).resolve()
 
-    raw = pd.read_excel(path, sheet_name=gsmm["sheet"], dtype=str)
+    if not src.exists():
+        raise FileNotFoundError(
+            f"Prepared coordinate file not found:\n  {src}\n"
+            f"It is produced by cfi-map2r2-data and is git-ignored there, so it "
+            f"will be absent on a fresh clone. Regenerate it in that repo, or "
+            f"point gsmm.source_file at another location.")
 
-    missing = [c for c in cols.values() if c not in raw.columns]
-    # `city` is only used as a cross-check, so its absence is not fatal.
-    missing = [c for c in missing if c != cols["city"]]
+    df = pd.read_csv(src, dtype={cols["id"]: str})
+    print(f"Read {len(df):,} rows from {src}")
+
+    missing = [c for c in cols.values() if c not in df.columns]
     if missing:
-        raise ValueError(
-            f"{path.name}: sheet '{gsmm['sheet']}' missing columns {missing}")
-
-    eid = raw[cols["id"]].astype(str).str.strip()
-    df = pd.DataFrame({
-        "country": country,
-        "enterprise_id": eid,
-        "latitude": _to_number(raw[cols["lat"]]),
-        "longitude": _to_number(raw[cols["lon"]]),
-        "fieldwork_date": _to_listing_date(raw[cols["date"]]),
-        "city": city,
+        raise ValueError(f"{src.name} missing required columns: {missing}")
+    return df.rename(columns={
+        cols["id"]: "enterprise_id", cols["lat"]: "latitude",
+        cols["lon"]: "longitude", cols["date"]: "fieldwork_date",
+        cols["city"]: "city",
     })
-
-    n_raw = len(df)
-
-    # The export's own City column should agree with the config map; a
-    # disagreement means one of them has drifted and is worth seeing.
-    if cols["city"] in raw.columns:
-        seen = set(raw[cols["city"]].dropna().str.strip().unique()) - {""}
-        if seen and seen != {city}:
-            print(f"  ! {country}: export City column is {sorted(seen)}, "
-                  f"config says '{city}' — using config")
-
-    # De-duplicate on Enterprise ID, keeping the first (a few repeats occur),
-    # as prep_enumeration() does.
-    blank = ~eid.astype(bool) | eid.isin({"nan", "None"})
-    if blank.any():
-        print(f"  ! {country}: dropped {int(blank.sum())} rows with a blank "
-              f"Enterprise ID")
-        df = df[~blank]
-    n_dedupe = int(df["enterprise_id"].duplicated().sum())
-    df = df[~df["enterprise_id"].duplicated()]
-
-    # Enterprise IDs are unique only WITHIN a country — 5 are reused across two
-    # countries — and run_all.py merges every indicator on business_id alone, so
-    # a bare id would fan those rows out silently.
-    df["business_id"] = df["country"] + "_" + df["enterprise_id"]
-
-    bad = (df["latitude"].isna() | df["longitude"].isna()
-           | ~df["latitude"].between(-90, 90)
-           | ~df["longitude"].between(-180, 180)
-           | ((df["latitude"].abs() < 0.001) & (df["longitude"].abs() < 0.001)))
-    n_bad = int(bad.sum())
-    df = df[~bad]
-
-    n_nodate = int(df["fieldwork_date"].isna().sum())
-    df = df[df["fieldwork_date"].notna()]
-
-    span = ""
-    if len(df):
-        span = (f"  {df['fieldwork_date'].min():%Y-%m-%d} to "
-                f"{df['fieldwork_date'].max():%Y-%m-%d}")
-    print(f"  {country:<10s} {path.name:<42s} {n_raw:>6,} listed -> "
-          f"{len(df):>6,} usable"
-          f"{f' (-{n_dedupe} dup id)' if n_dedupe else ''}"
-          f"{f' (-{n_bad} bad coords)' if n_bad else ''}"
-          f"{f' (-{n_nodate} no date)' if n_nodate else ''}{span}")
-    return df
 
 
 def prepare_gsmm_listings(config: dict,
-                          countries: list[str] | None = None) -> pd.DataFrame:
-    """Read each country's latest GSMM export into one input DataFrame.
-
-    `countries` (or gsmm.include_countries in config) restricts the ingest to a
-    subset — useful for a test run over fewer cities. None means all five.
-    """
+                          cities: list[str] | None = None) -> pd.DataFrame:
+    """Adapt the prepared coordinates to the pipeline's input contract."""
     gsmm = config["gsmm"]
-    source_dir = (REPO_ROOT / gsmm["source_dir"]).resolve()
-    if not source_dir.is_dir():
-        raise FileNotFoundError(
-            f"GSMM source directory not found: {source_dir}\n"
-            f"Set gsmm.source_dir in config.yaml, or sync the exports "
-            f"(see cfi-map2r2-data/data/README.md).")
+    city_country = gsmm["city_country_map"]
 
-    known = gsmm["country_city_map"]
-    wanted = countries or gsmm.get("include_countries") or sorted(known)
-    unknown = [c for c in wanted if c not in known]
+    df = load_prepared_coords(config)
+
+    unknown = sorted(set(df["city"]) - set(city_country))
     if unknown:
         raise ValueError(
-            f"Unknown countries {unknown}; known: {sorted(known)}")
-    selected = [c for c in sorted(known) if c in set(wanted)]
+            f"Cities in the source file with no country mapping: {unknown}. "
+            f"Add them to gsmm.city_country_map in config.yaml.")
 
-    print(f"Reading GSMM exports from {source_dir}")
-    if len(selected) < len(known):
-        skipped = sorted(set(known) - set(selected))
-        print(f"  SUBSET: {len(selected)} of {len(known)} countries "
-              f"({', '.join(selected)}); skipping {', '.join(skipped)}")
+    wanted = cities or gsmm.get("include_cities") or sorted(city_country)
+    bad = [c for c in wanted if c not in city_country]
+    if bad:
+        raise ValueError(f"Unknown cities {bad}; known: {sorted(city_country)}")
+    if set(wanted) != set(city_country):
+        skipped = sorted(set(df['city'].unique()) - set(wanted))
+        print(f"  SUBSET: keeping {sorted(wanted)}; skipping {skipped}")
+        df = df[df["city"].isin(wanted)]
 
-    frames = []
-    for country in selected:
-        path = gsmm_snapshot_path(country, source_dir, gsmm["file_prefixes"])
-        if path is None:
-            print(f"  ! {country:<10s} no export found — skipped")
-            continue
-        frames.append(read_country_listings(country, path, config))
+    df = df.copy()
+    df["enterprise_id"] = df["enterprise_id"].astype(str).str.strip()
+    df["country"] = df["city"].map(city_country)
+    df["business_id"] = df["country"] + "_" + df["enterprise_id"]
+    df["fieldwork_date"] = pd.to_datetime(df["fieldwork_date"])
 
-    if not frames:
-        raise RuntimeError(f"No GSMM exports found in {source_dir}")
-
-    df = pd.concat(frames, ignore_index=True)
-
-    collisions = int(df["business_id"].duplicated().sum())
-    if collisions:
+    # The bare Enterprise ID collides across countries; the prefixed key must
+    # not. If this ever fires, two businesses in ONE country share an id and
+    # cfi-map2r2-data's de-duplication has a gap — fix it there, not here.
+    dupes = df[df["business_id"].duplicated(keep=False)]
+    if not dupes.empty:
         raise RuntimeError(
-            f"{collisions} duplicate business_id values after prefixing by "
-            f"country — the id scheme is not unique, do not run the pipeline.")
+            f"{len(dupes)} rows share a <Country>_<Enterprise ID> key after "
+            f"prefixing, e.g.\n{dupes.head(6).to_string(index=False)}\n"
+            f"Resolve in cfi-map2r2-data — this pipeline does not de-duplicate.")
+
+    bad_coords = (df["latitude"].isna() | df["longitude"].isna()
+                  | ~df["latitude"].between(-90, 90)
+                  | ~df["longitude"].between(-180, 180))
+    if bad_coords.any():
+        print(f"  ! dropped {int(bad_coords.sum())} rows with invalid coordinates")
+        df = df[~bad_coords]
+    if df["fieldwork_date"].isna().any():
+        n = int(df["fieldwork_date"].isna().sum())
+        print(f"  ! dropped {n} rows with an unparseable fieldwork_date")
+        df = df[df["fieldwork_date"].notna()]
 
     return df[["business_id", "latitude", "longitude", "fieldwork_date",
                "city", "country", "enterprise_id"]]
@@ -210,15 +113,15 @@ def prepare_gsmm_listings(config: dict,
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--countries",
-        help="Comma-separated subset to ingest, overriding "
-             "gsmm.include_countries (e.g. 'Ethiopia,Indonesia,Nigeria').")
+        "--cities",
+        help="Comma-separated subset to ingest, overriding gsmm.include_cities "
+             "(e.g. 'Delhi,Lagos').")
     args = parser.parse_args()
-    countries = ([c.strip() for c in args.countries.split(",") if c.strip()]
-                 if args.countries else None)
+    cities = ([c.strip() for c in args.cities.split(",") if c.strip()]
+              if args.cities else None)
 
     config = load_config()
-    df = prepare_gsmm_listings(config, countries)
+    df = prepare_gsmm_listings(config, cities)
 
     out_path = REPO_ROOT / config["gsmm"]["output_file"]
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -229,13 +132,15 @@ def main():
 
     print(f"\nWrote {len(out):,} listings across {df['city'].nunique()} cities "
           f"to {out_path}")
-    print(df.groupby("city").size().to_string())
+    summary = df.groupby("city").agg(
+        businesses=("business_id", "size"),
+        first_listed=("fieldwork_date", "min"),
+        last_listed=("fieldwork_date", "max"))
+    summary["first_listed"] = summary["first_listed"].dt.date
+    summary["last_listed"] = summary["last_listed"].dt.date
+    print(summary.to_string())
     print("\nThis file holds exact business coordinates: it is git-ignored, "
           "keep it that way.")
-    if config.get("input_file") != config["gsmm"]["output_file"]:
-        print(f"\nNOTE: config.yaml input_file is "
-              f"'{config.get('input_file')}'. Point it at "
-              f"'{config['gsmm']['output_file']}' before running run_all.py.")
 
 
 if __name__ == "__main__":

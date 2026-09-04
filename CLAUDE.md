@@ -23,7 +23,8 @@ config.yaml                  # All configurable parameters
 requirements.txt             # earthengine-api, pandas, geopandas, pyyaml
 python/
   utils.py                   # GEE auth, coordinate loading, batching, export
-  prepare_gsmm_input.py      # Ingest: GSMM listing exports -> data/input/gsmm_listings.csv
+  prepare_gsmm_input.py      # Ingest: cfi-map2r2-data prepared coords -> data/input/gsmm_listings.csv
+  make_registry.py           # Generates registry_environment.R for cfi-map2r2-data
   extract_elevation.py       # Indicator 1: SRTM 30m
   extract_heat.py            # Indicator 2: MODIS LST (per fieldwork_date)
   extract_flood.py           # Indicator 3: MERIT Hydro HAND + JRC surface water
@@ -44,6 +45,7 @@ data/
   input/blocks/              # Sampling frame GeoJSON files (from blockexplorer repo)
   output/                    # Point-level indicator CSVs + data_dictionary.md
   output/blocks/             # Block-level indicator CSVs + block_data_dictionary.md
+registry_environment.R       # GENERATED indicator registry, ported to cfi-map2r2-data
 inspect_indicators.ipynb     # Jupyter notebook for visual inspection (geemap)
 plan.md                      # Implementation plan with design decisions
 ```
@@ -92,7 +94,8 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 - **Grouping strategy**: Time-series indicators (heat, nightlights) group by `fieldwork_date` to reuse the same image collection. Coarse-resolution indicators (rainfall at 5.5km, AOD at 1km) group by `city` instead for efficiency.
 - **Buffer-based indicators**: Canopy and built-up compute zonal stats within circular buffers (50m, 150m). Nightlights use a 150m buffer. All others are point samples.
 - **Column naming**: Buffer-dependent columns include the radius suffix (e.g., `canopy_fraction_50m`, `builtup_fraction_150m`).
-- **GSMM ingestion**: `prepare_gsmm_input.py` reads the "Business Data" sheet of the latest export per country from `../cfi-map2r2-data/data/gsmm/`. File choice is by kind first, then date — a country team's cleaned `GSMM_Analysis_*` export beats the vendor's daily `GSMM_Report_*` even when the Report is newer (ported from `gsmm_snapshot_path()` in that repo's `R/prep_cto.R`). Enterprise IDs are unique only *within* a country, so `business_id` is emitted as `<Country>_<Enterprise ID>`, with `country` and `enterprise_id` kept as columns for the join back onto `enum_data`. `fieldwork_date` is the listing date, which arrives either as an Excel serial (Analysis workbooks) or an ISO datetime (vendor exports).
+- **GSMM ingestion**: `prepare_gsmm_input.py` consumes `../cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv`. **That repo owns all preparation and cleaning** — export selection, de-duplication, date parsing, decimal normalisation — so those rules are not reimplemented here and cannot drift. This script only adapts the file to the input contract, and its one substantive job is the key: the source `business_id` is the bare Enterprise ID, unique only *within* a country (5 ids appear in two cities each), so it is rewritten as `<Country>_<Enterprise ID>` with the raw id kept as `enterprise_id`. It fails loudly rather than de-duplicating if a collision survives. `gsmm.include_cities` restricts the ingest.
+- **Registry**: `make_registry.py` generates `registry_environment.R`, drop-in registry rows for the analysis app in `cfi-map2r2-data`. It fails if any `all_indicators.csv` column is neither registered nor explicitly excluded, so it cannot drift. Regenerate after adding indicators; never hand-edit the `.R`.
 - **Population sources**: indicators 9 (WorldPop) and 10 (Meta HRSL) measure the same construct by different methods. They rank neighbourhoods similarly *within* a city (r = 0.73–0.95) but disagree sharply on level (Addis Ababa 12,326 vs 26,486 people/km²), so neither supports absolute or cross-city density claims. Both are extracted deliberately as a sensitivity check. **HRSL is the better default**: it has no missing values (WorldPop has 101 gaps on the North Jakarta coast that HRSL shows are densely populated) and is uncorrelated with `builtup_fraction` (r = -0.05 vs WorldPop's 0.41). Never put both in one model. HRSL is a **community-catalog** asset (`projects/sat-io/...`), the pipeline's only third-party dependency.
 - **Cross-city day-counts need the rate columns.** `heat_days_gt*` and `aod_days_gt*` count exceedances among *observed* days, and cloud cover makes that denominator range 404–40 (LST) and 347–91 (AOD) across cities. `run_all.py` derives `*_frac_gt*` companions (`utils.add_exceedance_rates`) — always compare on those. Using raw AOD counts reverses the city ranking, putting Lagos last on air pollution when the rate puts it first. Rainfall needs no rate (CHIRPS is gap-filled, `rain_valid_obs` = 730 everywhere).
 - **Density conversions must reduce at the source's native scale.** These datasets store a count per cell; `ee.Image.pixelArea()` reports area at the *requested* scale, so reducing finer than native inflates density (WorldPop at 30m vs 93m: 9.4x too high).

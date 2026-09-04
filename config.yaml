@@ -234,41 +234,43 @@ blocks:
   batch_size: 100
 
 # ---------- GSMM Listing Ingestion ----------
-# Builds data/input/gsmm_listings.csv from the GSMM enumeration exports held in
-# the cfi-map2r2-data repo. Run `python3 prepare_gsmm_input.py` before run_all.py.
+# Builds data/input/gsmm_listings.csv from the prepared coordinate file that
+# cfi-map2r2-data produces. Run `python3 prepare_gsmm_input.py` before run_all.py.
 gsmm:
-  # GSMM exports live in the analysis repo (itself a copy of the cfi-map2-admin
-  # datastore, which is the source of truth). See its data/README.md.
-  source_dir: "../cfi-map2r2-data/data/gsmm"
-  # Output CSV. GIT-IGNORED: it carries exact business coordinates, which are
-  # marked sensitive in the study's crosswalk and must not be committed.
-  output_file: "data/input/gsmm_listings.csv"
-  # Sheet holding one row per listed business
-  sheet: "Business Data"
-  # File-kind preference, highest first, then newest date WITHIN a kind. A
-  # country team's cleaned "Analysis" export wins over the vendor's daily
-  # "Report" export even when the Report is newer — matching gsmm_snapshot_path()
-  # in cfi-map2r2-data/R/prep_cto.R. Newest-overall would silently swap the
-  # study's listing back to the uncleaned vendor file.
-  file_prefixes: ["GSMM_Analysis", "GSMM_Report"]
-  # Source column names in the Business Data sheet
+  # SINGLE SOURCE OF TRUTH. cfi-map2r2-data owns every preparation and cleaning
+  # step — choosing the authoritative export per country (cleaned GSMM_Analysis
+  # over vendor GSMM_Report), de-duplicating on Enterprise ID, parsing the two
+  # Date time formats, normalising comma decimals. This pipeline is a pure
+  # consumer, so those rules live in one repo instead of being reimplemented
+  # here and drifting. (Until 2026-09-04 this script read the raw .xlsx exports
+  # directly; see git history if that logic is ever needed again.)
+  #
+  # The file is git-ignored in BOTH repos: it carries exact business coordinates.
+  source_file: "../cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv"
+  # Columns expected in that file
   columns:
-    id: "Enterprise ID"
-    lat: "Latitude"
-    lon: "Longitude"
-    date: "Date time"
-    city: "City"
-  # Country -> city. Enterprise IDs are unique only WITHIN a country (5 ids are
-  # reused across countries), so business_id is emitted as
-  # "<Country>_<Enterprise ID>" and country/enterprise_id are kept as columns
-  # for the join back onto enum_data.
-  country_city_map:
-    Brazil: "Sao Paulo"
-    Ethiopia: "Addis Ababa"
-    India: "Delhi"
-    Indonesia: "Jakarta"
-    Nigeria: "Lagos"
-  # Restrict the ingest to a subset of countries. Set to null (or delete) to
-  # include all five; override per-run with `--countries Brazil,India`.
-  # CURRENTLY A TEST SUBSET: Lagos / Jakarta / Addis Ababa only.
-  include_countries: ["Ethiopia", "Indonesia", "Nigeria"]
+    id: "business_id"
+    lat: "latitude"
+    lon: "longitude"
+    date: "fieldwork_date"
+    city: "city"
+  # Output, consumed via the top-level input_file setting.
+  output_file: "data/input/gsmm_listings.csv"
+  # City -> country. The source file's business_id is the BARE GSMM Enterprise
+  # ID, which is unique only within a country: 5 ids appear in two cities each
+  # (29797, 31959, 68582, 75750, 83548). run_all.py merges every indicator on
+  # business_id alone, so the key is rewritten as "<Country>_<Enterprise ID>"
+  # and the raw id kept as `enterprise_id` for the country+enterprise_id join
+  # back onto enum_data.
+  city_country_map:
+    Sao Paulo: "Brazil"
+    Addis Ababa: "Ethiopia"
+    Delhi: "India"
+    Jakarta: "Indonesia"
+    Lagos: "Nigeria"
+  # Restrict the ingest to a subset of cities. null (or absent) = all five.
+  # Override per-run with `--cities Delhi,Lagos`.
+  # CURRENTLY the three cities whose listing is complete. Delhi and Sao Paulo
+  # are in the source file (7,357 and 3,508 businesses) but excluded pending
+  # completion; drop this key to null to extract all five.
+  include_cities: ["Addis Ababa", "Jakarta", "Lagos"]
