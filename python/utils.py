@@ -295,6 +295,7 @@ INDICATOR_CONFIG_KEYS = {
     "nightlights": ["nightlights", "time_window"],
     "builtup":     ["builtup"],
     "population":  ["population"],
+    "hrsl":        ["hrsl"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.

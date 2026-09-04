@@ -367,6 +367,62 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 
 ---
 
+## Indicator 10: Population Density — Meta HRSL
+
+A **second, independent** population estimate alongside indicator 9. Read both together; see *Choosing between the two population sources* below.
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `hrsl_density_50m` | float | people per km² | Mean residential population density within a 50m radius buffer. Not sub-pixel (a 50m buffer covers ~8 HRSL cells), but see the note on buffer redundancy below. |
+| `hrsl_density_150m` | float | people per km² | Mean residential population density within a 150m radius buffer. |
+
+**Data source:** Meta / CIESIN High Resolution Settlement Layer (HRSL), "general" population, v1.5.x.
+- GEE asset: `projects/sat-io/open-datasets/hrsl/hrslpop`, band `b1`
+- Resolution: 0.000277778° ≈ **30.9m** — the finest of the gridded population products, ~3x finer than WorldPop or GHS-POP
+- Licence: CC-BY, distributed via CIESIN at Columbia University
+- Reference: Facebook Connectivity Lab and CIESIN (2016). *High Resolution Settlement Layer (HRSL)*.
+
+> **This is a COMMUNITY-CATALOG asset**, not the official Earth Engine catalog. It is maintained by the [awesome-gee-community-catalog](https://gee-community-catalog.org/projects/hrsl/) project under a `projects/sat-io/...` path, which is a third-party dependency that can be moved or re-versioned without notice. If this indicator suddenly fails to resolve, that is the first thing to check. Indicators 1–9 all use official catalog assets.
+
+**Processing:**
+
+1. **Tile filtering:** HRSL ships as 237 global COG tiles, so the collection is restricted with `filterBounds` before `.mosaic()` — one tile covers each study city. Without the filter the mosaic spans every tile on Earth.
+2. **Count → density:** the band is a count per cell, converted with `b1 / ee.Image.pixelArea() × 1e6`.
+3. **Zonal reduction:** `ee.Reducer.mean()` within each buffer at **31m** — the native scale.
+
+> **The count→density conversion is only valid at the dataset's native scale.** `ee.Image.pixelArea()` reports the area of a pixel *at the requested reduction scale*, while the band still holds a count per *native* cell. Reducing at a finer scale shrinks the denominator without shrinking the numerator. Measured: reducing WorldPop at 30m instead of its native 93m inflates density **9.4x** (63,718 vs 6,772 people/km²). Any new population source must set `scale_m` to its own native grid.
+
+**Analytical notes:**
+
+- **Building-footprint constrained.** A CNN detects individual buildings in satellite imagery, and census population is allocated only to cells containing structures. This differs fundamentally from WorldPop (Random Forest over geospatial covariates) and GHS-POP (disaggregation over built-up surface).
+- **Independent of GHSL.** Unlike GHS-POP — which is disaggregated *using* GHS-BUILT-S, the same product behind `builtup_fraction_*` — HRSL shares no inputs with the built-up indicator, so it can serve as a genuinely separate signal in a model.
+- **Higher resolution, NOT more recent.** HRSL's population totals come from census projections circa 2015–2020 depending on country. It does not supersede WorldPop 2020 on vintage; it improves on spatial detail.
+- **The two buffer radii are still near-redundant, despite the finer grid.** Measured on the full 10,989-business run: `hrsl_density_50m` vs `hrsl_density_150m` correlate at **r = 0.9974**, essentially the same redundancy as WorldPop's 0.9987. The finer grid does *not* fix this, because the redundancy is driven by the spatial autocorrelation of population — the neighbourhood 50m and 150m around a point is largely the same place — not by pixel size. **Use the 150m column** (it also has zero missing values against 13 at 50m).
+- **Effectively uncorrelated with built-up surface** (`builtup_fraction_150m`): **r = -0.05**, against 0.41 for WorldPop. Despite being building-footprint-derived, HRSL shares no variance with the GHSL built-up product at this scale, so it introduces no collinearity into a model containing both.
+
+### Choosing between the two population sources
+
+Full-sample means over all 10,989 businesses, 150m buffers (GHS-POP column is from a 300-point probe, not extracted):
+
+| City | `hrsl_density_150m` | `pop_density_150m` (WorldPop) | GHS-POP 2025 (probe only) |
+|---|---|---|---|
+| Addis Ababa | 26,486 | 12,326 | ~21,100 |
+| Jakarta | 19,935 | 18,407 | ~21,900 |
+| Lagos | 12,876 | 14,391 | ~7,400 |
+
+**The two extracted sources rank neighbourhoods similarly but disagree sharply on level.** Within-city correlation between `hrsl_density_150m` and `pop_density_150m` is high — Addis Ababa **0.95**, Jakarta **0.82**, Lagos **0.73** — yet Addis Ababa's *level* differs by 2.1x (26,486 vs 12,326) and Lagos even reverses sign of the gap. Pooled across cities the correlation drops to **0.74**, because between-city level disagreement swamps the within-city agreement. Practically: either source supports *within-city* relative comparisons; neither should be trusted for absolute density or for cross-city level comparisons.
+
+**These products disagree substantially, and the disagreement is not noise.** Addis Ababa spans a 3x range across the three estimates while Jakarta is comparatively tight — consistent with published findings that gridded population products diverge most where census infrastructure is weakest ([Uncovering large inconsistencies between ML-derived gridded settlement datasets](https://arxiv.org/pdf/2404.13127)).
+
+Practical guidance:
+- **HRSL is the better default**: finest resolution, non-redundant buffer radii, independent of GHSL, and it sits between the other two products while correlating better with both than they do with each other.
+- **Use WorldPop as the robustness check.** Any population result that flips between `hrsl_density_150m` and `pop_density_150m` is not robust to source choice and should be reported with that caveat.
+- **Treat cross-city and absolute-level population claims with caution everywhere**, and Addis Ababa most of all (2.1x between the two extracted sources). Within-city relative comparisons are far better supported (r = 0.73–0.95).
+- **HRSL covers ground the others do not.** At the 101 North Jakarta businesses where WorldPop (and GHS-POP) return no data, HRSL reports a mean of **24,661 people/km²** — a densely populated area. Verified directly: 19.28 people per 949 m² cell = 20,308 people/km². The building-footprint method detects settlement on coastal land that the other products' land masks exclude. `hrsl_density_150m` has **zero** missing values across all 10,989 businesses.
+- Do **not** put both in one model; they measure the same construct.
+
+---
+
 ## Missing data
 
 Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is fully populated.
@@ -389,11 +445,13 @@ The coordinates are sound, and the cause is a resolution mismatch rather than ba
 
 `MOD11A1` is a **land** surface temperature product operating on a 1 km land mask. A business on a narrow strip of land fringed by lagoon reads as land at 30 m but sits inside a 1 km pixel that is majority water. Treat these as structurally missing, not as zeros.
 
+**HRSL covers these points.** At all 101, `hrsl_density_150m` (indicator 10) returns a value, averaging 24,661 people/km². So the area is *not* empty — WorldPop's and GHS-POP's land masks exclude settlement that Meta's building-footprint method detects. If a complete population column matters more than WorldPop's independence, use `hrsl_density_150m`, which has no missing values.
+
 **The masked WorldPop cells (North Jakarta coast).** All 101 affected businesses are in Jakarta, inside a ~1.4 x 3.2 km coastal strip (lat -6.1605 to -6.1476, lon 106.8052 to 106.8341, 98 distinct coordinates). Their profile is distinctive: mean elevation 6.6 m against 919 m for the rest of the sample, mean HAND 1.6 m, 85% flagged `coastal_lowland`, and roughly two-thirds sitting on JRC-detected water (`jrc_max_extent = 1`).
 
 **These are masked, not zero.** Sampling the raw `population` band at these points returns no value at all rather than 0, i.e. WorldPop did not estimate a population there — it is not a finding that nobody lives there. **Do not impute 0**; that would assert an empty neighbourhood in what is in fact densely built-up land (`builtup_fraction_150m` averages 42.6% at these points, indistinguishable from the rest of the sample).
 
-The likely cause is WorldPop's land/coastline mask at 100 m failing to cover reclaimed or newly built coastal land in North Jakarta. Supporting evidence: the 150 m buffer recovers 73 of the 101, exactly what an edge-of-mask artefact predicts as the buffer overlaps neighbouring valid cells, and unlike a systematic failure over the area. These are a different set of businesses from the 24 Lagos points missing heat data — the two gaps do not overlap at all.
+The cause is WorldPop's land/coastline mask at 100 m failing to cover reclaimed or newly built coastal land in North Jakarta — confirmed by HRSL, which detects buildings and dense population across the same strip. Supporting evidence: the 150 m buffer recovers 73 of the 101, exactly what an edge-of-mask artefact predicts as the buffer overlaps neighbouring valid cells. These are a different set of businesses from the 24 Lagos points missing heat data — the two gaps do not overlap at all.
 
 ---
 

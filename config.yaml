@@ -172,6 +172,36 @@ population:
   # Native grid is 0.000833333 deg ~= 92.77m at the equator.
   scale_m: 93
 
+# ---------- Indicator 10: Population Density (Meta HRSL) ----------
+# A SECOND, independent population estimate alongside indicator 9 (WorldPop).
+# The two disagree substantially — measured on 300 business points at 150m,
+# Addis Ababa reads 7,112 people/km2 under WorldPop against 13,714 under HRSL
+# — so carrying both makes that measurement uncertainty visible instead of
+# burying it in one arbitrary choice. HRSL correlates better with both
+# WorldPop (0.82) and GHS-POP (0.73) than those two do with each other (0.53).
+hrsl:
+  # COMMUNITY CATALOG ASSET, not the official GEE catalog: maintained by the
+  # awesome-gee-community-catalog project (gee-community-catalog.org/projects/hrsl),
+  # sourced from Meta/CIESIN under CC-BY. A third-party path can move or be
+  # re-versioned without notice — if this asset stops resolving, that is why.
+  # 237 global COG tiles; one tile covers each study city.
+  dataset: "projects/sat-io/open-datasets/hrsl/hrslpop"
+  band: "b1"
+  # Population totals derive from census projections circa 2015-2020 depending
+  # on country. HRSL is HIGHER RESOLUTION than WorldPop, not more recent.
+  # Tiles carry a `version` property (1.5.x here), not a year.
+  version_note: "v1.5.x general, census vintage ~2015-2020"
+  buffer_radii_m: [50, 150]
+  # Native grid 0.000277778 deg ~= 30.9m at the equator. At this resolution a
+  # 50m buffer covers ~8 cells, so unlike WorldPop's 93m grid the two radii are
+  # genuinely independent (WorldPop's correlate at r=0.9987).
+  #
+  # THIS SCALE MUST MATCH THE NATIVE GRID. The band is a count per cell and the
+  # extractor divides by ee.Image.pixelArea(); reducing at any other scale
+  # rescales the denominator but not the count. Reducing WorldPop at 30m rather
+  # than its native 93m inflates density 9.4x.
+  scale_m: 31
+
 # ---------- GEE Processing ----------
 gee:
   # Project ID for Earth Engine (set to your GEE cloud project)

@@ -33,7 +33,8 @@ python/
   extract_nightlights.py     # Indicator 7: VIIRS monthly (per fieldwork_date)
   extract_builtup.py         # Indicator 8: JRC GHSL 10m (50m + 150m buffers)
   extract_population.py      # Indicator 9: WorldPop 100m density (50m + 150m buffers)
-  run_all.py                 # Orchestrator: runs all 9 + merges
+  extract_hrsl.py            # Indicator 10: Meta HRSL 31m density (50m + 150m buffers)
+  run_all.py                 # Orchestrator: runs all 10 + merges
   blocks/                    # Block-level aggregation pipeline
     utils_blocks.py          # Block polygon loading, GeoJSON→FC, batching
     extract_*_blocks.py      # Per-indicator zonal extraction (the first 8 indicators)
@@ -92,6 +93,8 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 - **Buffer-based indicators**: Canopy and built-up compute zonal stats within circular buffers (50m, 150m). Nightlights use a 150m buffer. All others are point samples.
 - **Column naming**: Buffer-dependent columns include the radius suffix (e.g., `canopy_fraction_50m`, `builtup_fraction_150m`).
 - **GSMM ingestion**: `prepare_gsmm_input.py` reads the "Business Data" sheet of the latest export per country from `../cfi-map2r2-data/data/gsmm/`. File choice is by kind first, then date — a country team's cleaned `GSMM_Analysis_*` export beats the vendor's daily `GSMM_Report_*` even when the Report is newer (ported from `gsmm_snapshot_path()` in that repo's `R/prep_cto.R`). Enterprise IDs are unique only *within* a country, so `business_id` is emitted as `<Country>_<Enterprise ID>`, with `country` and `enterprise_id` kept as columns for the join back onto `enum_data`. `fieldwork_date` is the listing date, which arrives either as an Excel serial (Analysis workbooks) or an ISO datetime (vendor exports).
+- **Population sources**: indicators 9 (WorldPop) and 10 (Meta HRSL) measure the same construct by different methods. They rank neighbourhoods similarly *within* a city (r = 0.73–0.95) but disagree sharply on level (Addis Ababa 12,326 vs 26,486 people/km²), so neither supports absolute or cross-city density claims. Both are extracted deliberately as a sensitivity check. **HRSL is the better default**: it has no missing values (WorldPop has 101 gaps on the North Jakarta coast that HRSL shows are densely populated) and is uncorrelated with `builtup_fraction` (r = -0.05 vs WorldPop's 0.41). Never put both in one model. HRSL is a **community-catalog** asset (`projects/sat-io/...`), the pipeline's only third-party dependency.
+- **Density conversions must reduce at the source's native scale.** These datasets store a count per cell; `ee.Image.pixelArea()` reports area at the *requested* scale, so reducing finer than native inflates density (WorldPop at 30m vs 93m: 9.4x too high).
 - **Coordinates are sensitive**: `data/input/gsmm_listings.csv` holds exact business locations and is git-ignored. `data/input/` is otherwise tracked, so never remove that rule, and never copy the file into `cfi-map2r2-data`. Only the derived indicators are safe to share back.
 - **Block pipeline**: Uses the same GEE datasets and config but operates on polygon geometries with zonal reductions (`reduceRegions` with `ee.Reducer.mean`). No buffers or fieldwork dates — blocks use a fixed analysis period and the polygon itself as the analysis unit. Block IDs are prefixed with city name for uniqueness.
 

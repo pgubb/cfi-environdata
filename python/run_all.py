@@ -38,6 +38,8 @@ INDICATORS = [
      "extract_builtup", "extract_builtup"),
     ("population",  "Indicator 9: Population Density (WorldPop 100m)",
      "extract_population", "extract_population"),
+    ("hrsl",        "Indicator 10: Population Density (Meta HRSL 31m)",
+     "extract_hrsl", "extract_hrsl"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.
