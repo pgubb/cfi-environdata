@@ -23,6 +23,10 @@ date_format: "%Y-%m-%d"
 elevation:
   dataset: "USGS/SRTMGL1_003"
   band: "elevation"
+  # Terrain slope in degrees, derived from the same DEM via ee.Terrain.slope.
+  # A landslide-susceptibility proxy (the survey asks about clim_*_landslide)
+  # and a surface-runoff term for flooding. Set false to skip.
+  compute_slope: true
 
 # ---------- Indicator 2: Extreme Heat Days ----------
 heat:
@@ -37,6 +41,14 @@ heat:
   thresholds_celsius: [40, 45, 50]
   # Also compute mean and max LST over the window
   compute_continuous: true
+  # Night-time LST from the SAME dataset, different band. Night heat is what
+  # drives heat morbidity - no overnight recovery - and speaks to the survey's
+  # clim_heat_* items more directly than daytime surface temperature alone.
+  # Setting this to null skips the night bands.
+  night_band: "LST_Night_1km"
+  # "Tropical night" thresholds (C). 20C and 25C are the common heat-health
+  # cut-offs for nights offering no physiological recovery.
+  night_thresholds_celsius: [20, 25]
 
 # ---------- Indicator 3: Flood Vulnerability ----------
 flood:
@@ -120,6 +132,11 @@ nightlights:
   buffer_radius_m: 150
   # VIIRS native resolution ~500m
   scale_m: 500
+  # Month-to-month variability of radiance (SD and coefficient of variation)
+  # across the 12 monthly composites. A LIGHTING-STABILITY measure - see the
+  # data dictionary for why it is only a weak proxy for power outages. Set
+  # false to skip.
+  compute_variability: true
 
 # ---------- Indicator 8: Built-up Surface Fraction ----------
 builtup:
@@ -128,6 +145,47 @@ builtup:
   band: "built_surface"
   buffer_radii_m: [50, 150]
   scale_m: 10
+
+# ---------- Indicator 11: Humid Heat Stress (ERA5-Land) ----------
+heatstress:
+  # Land surface temperature (indicator 2) ignores humidity entirely, which
+  # misranks cities for HUMAN heat stress: dry highland Addis Ababa and humid
+  # coastal Jakarta are not comparable on LST alone. This adds air temperature
+  # and humidity, and a simplified Wet Bulb Globe Temperature.
+  dataset: "ECMWF/ERA5_LAND/DAILY_AGGR"
+  bands:
+    temp: "temperature_2m"
+    temp_max: "temperature_2m_max"
+    dewpoint: "dewpoint_temperature_2m"
+  trailing_years: 2
+  # sWBGT thresholds (C) from ISO 7243 occupational heat-stress guidance:
+  # 28 = high risk for heavy work, 31 = very high, rest breaks advised.
+  thresholds_wbgt: [28, 31]
+  # ~11km native grid. This is COARSER THAN A CITY: expect only a handful of
+  # distinct values per city, so treat it as a city-level control rather than
+  # within-city variation.
+  scale_m: 11132
+
+# ---------- Indicator 12: Traffic-related Air Pollution (NO2) ----------
+no2:
+  # AOD (indicator 6) is column-integrated aerosol. NO2 is specific to
+  # combustion - traffic, generators, industry - so it separates street-level
+  # sources from regional dust and biomass haze.
+  dataset: "COPERNICUS/S5P/OFFL/L3_NO2"
+  band: "tropospheric_NO2_column_number_density"
+  trailing_years: 2
+  # Raw values are mol/m2; scaled to micromol/m2 for readability.
+  scale_factor: 1000000.0
+  # ~1113m native grid.
+  scale_m: 1113
+  # Sentinel-5P starts 2018-06-28; a 2-year window from 2026 is well inside it.
+  #
+  # Like air quality, this collection is large (~10,200 images in a 2-year
+  # window over one city) so request cost is dominated by the reduction rather
+  # than the point count. See the airquality section for the measurements
+  # behind this pattern.
+  batch_size: 1000
+  getinfo_timeout_sec: 600
 
 # ---------- Time-series analysis window ----------
 # Heat, rainfall, air quality and nightlights each reduce an image collection

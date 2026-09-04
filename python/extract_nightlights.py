@@ -52,11 +52,18 @@ def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         ntl_median = viirs.median()
         ntl_max = viirs.max()
 
-        stacked = ee.Image.cat([
+        layers = [
             ntl_mean.rename("ntl_mean_radiance"),
             ntl_median.rename("ntl_median_radiance"),
             ntl_max.rename("ntl_max_radiance"),
-        ])
+        ]
+        # Month-to-month spread of radiance. See the data dictionary: monthly
+        # compositing means this measures sustained lighting instability, NOT
+        # short power outages.
+        if ntl_cfg.get("compute_variability"):
+            layers.append(viirs.reduce(ee.Reducer.stdDev())
+                          .rename("ntl_sd_radiance"))
+        stacked = ee.Image.cat(layers)
 
         for batch in batch_points(city_df, gee_cfg["batch_size"]):
             batch_rows = []
@@ -78,17 +85,27 @@ def extract_nightlights(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
             for f in safe_getinfo(sampled)["features"]:
                 props = f["properties"]
-                batch_rows.append({
+                row = {
                     "business_id": props["business_id"],
                     "ntl_mean_radiance": props.get("ntl_mean_radiance"),
                     "ntl_median_radiance": props.get("ntl_median_radiance"),
                     "ntl_max_radiance": props.get("ntl_max_radiance"),
-                })
+                }
+                if ntl_cfg.get("compute_variability"):
+                    row["ntl_sd_radiance"] = props.get("ntl_sd_radiance")
+                batch_rows.append(row)
 
             append_checkpoint(batch_rows, INDICATOR_NAME, config)
             progress.update(len(batch))
 
-    return finish_indicator(INDICATOR_NAME, config)
+    result = finish_indicator(INDICATOR_NAME, config)
+
+    # Coefficient of variation: SD relative to level, so a dim street and a
+    # bright one are comparable. Undefined (NaN) where mean radiance is <= 0.
+    if ntl_cfg.get("compute_variability") and "ntl_sd_radiance" in result.columns:
+        mean = result["ntl_mean_radiance"].where(result["ntl_mean_radiance"] > 0)
+        result["ntl_cv_radiance"] = result["ntl_sd_radiance"] / mean
+    return result
 
 
 def main():

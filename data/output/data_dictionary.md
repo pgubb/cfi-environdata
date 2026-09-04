@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 60 columns: 7 passthrough from the input, 47 GEE-derived, and 6 derived exceedance rates.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 81 columns: 7 passthrough from the input, 66 GEE-derived, and 8 derived exceedance rates.
 
-**Last generated:** 2026-09-04, 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
+**Last generated:** 2026-09-04 (12 indicators), 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
 
 **Input provenance changed 2026-09-04.** The pipeline now consumes `cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv` rather than reading the raw GSMM `.xlsx` exports itself. That repo owns every preparation and cleaning step — authoritative export selection, de-duplication, date parsing, decimal normalisation — so those rules live in one place instead of being reimplemented here. Validation of the switch: for the 10,989 businesses extracted under the old path, the prepared coordinates are byte-identical (max difference 0.00000000) with all listing dates matching.
 
@@ -43,6 +43,7 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | Column | Type | Units | Description |
 |---|---|---|---|
 | `elevation_m` | integer | metres above sea level | Elevation at the business point location. |
+| `slope_degrees` | float | degrees | Terrain slope, from `ee.Terrain.slope` on the same DEM. A landslide-susceptibility proxy (the survey asks about `clim_*_landslide`) and a surface-runoff term linking terrain to flood exposure. City means: Addis Ababa 3.9°, Lagos 2.9°, Jakarta 2.6°. |
 
 **Data source:** NASA Shuttle Radar Topography Mission (SRTM) Version 3, 1 arc-second (~30m) global elevation model.
 - GEE asset: `USGS/SRTMGL1_003`, band `elevation`
@@ -64,6 +65,13 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | `heat_frac_gt40c` | float | proportion (0–1) | **Share of OBSERVED days** exceeding 40°C = `heat_days_gt40c / lst_valid_obs`. **Use this, not the raw count, for any cross-city comparison.** |
 | `heat_frac_gt45c` | float | proportion (0–1) | Share of observed days exceeding 45°C. |
 | `heat_frac_gt50c` | float | proportion (0–1) | Share of observed days exceeding 50°C. |
+| `heat_nights_gt20c` | integer | count of nights | Nights in the window whose land surface temperature stayed above 20°C. Same clear-sky caveat as the day counts — normalise with `heat_nights_frac_gt20c` for cross-city comparison. |
+| `heat_nights_frac_gt20c` | float | proportion (0–1) | Share of OBSERVED nights above 20°C. Cross-city comparable. |
+| `heat_nights_gt25c` | integer | count of nights | Nights above 25°C. |
+| `heat_nights_frac_gt25c` | float | proportion (0–1) | Share of observed nights above 25°C. |
+| `lst_night_mean_c` | float | °C | Mean NIGHT-TIME land surface temperature (Aqua/Terra night overpass). |
+| `lst_night_min_c` | float | °C | Coolest night-time land surface temperature observed in the window. |
+| `lst_night_valid_obs` | integer | count of nights | Clear-sky night observations, of 730 possible. Denominator for the `heat_nights_frac_*` columns. Diagnostic, not a substantive indicator. |
 | `lst_mean_c` | float | °C | Mean daytime land surface temperature across all valid observations in the trailing 2-year window. |
 | `lst_max_c` | float | °C | Maximum daytime land surface temperature observed in the trailing 2-year window. |
 | `lst_valid_obs` | integer | count of days | Number of clear-sky (non-masked) MODIS observations at the point within the trailing 2-year window. |
@@ -287,6 +295,10 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | `ntl_mean_radiance` | float | nW/cm²/sr | Mean nighttime radiance within a 150m buffer, averaged across the trailing 12 monthly composites. Higher values indicate greater economic activity, urbanisation, and infrastructure density. |
 | `ntl_median_radiance` | float | nW/cm²/sr | Median monthly radiance within the 150m buffer. Less sensitive to outlier months (e.g., festivals, temporary construction lighting). |
 | `ntl_max_radiance` | float | nW/cm²/sr | Maximum monthly radiance within the 150m buffer over the trailing 12 months. |
+| `ntl_sd_radiance` | float | nW/cm²/sr | Standard deviation of radiance across the 12 monthly composites. |
+| `ntl_cv_radiance` | float | ratio | Coefficient of variation (`sd / mean`), so a dim street and a bright one are comparable. NaN where mean radiance is ≤ 0. **A lighting-STABILITY measure, only weakly a power-outage proxy.** City means: Jakarta 0.57, Lagos 0.30, Addis Ababa 0.28. |
+
+> **On reading `ntl_cv_radiance` as power reliability.** It was added with the survey's `clim_adapt_generator` item in mind, but be careful: VIIRS composites are **monthly**, so a multi-hour or multi-day outage is averaged away and leaves no trace. What this measures is month-to-month instability in lighting, which mixes sustained grid problems with seasonal patterns, economic change and compositing artefacts from cloud cover. It is suggestive, not a measurement of outage frequency. Daily VIIRS (`NOAA/VIIRS/DNB/VNP46A2`) would be the product to use for genuine outage detection.
 
 **Data source:** NOAA/NASA VIIRS Day/Night Band (DNB) Monthly Cloud-Free Composites, version 1.
 - GEE asset: `NOAA/VIIRS/DNB/MONTHLY_V1/VCMSLCFG`, band `avg_rad`
@@ -431,6 +443,89 @@ Practical guidance:
 
 ---
 
+## Indicator 11: Humid Heat Stress (ERA5-Land)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `t2m_mean_c` | float | °C | Mean daily 2-metre AIR temperature over the fixed 730-day window. |
+| `t2m_max_c` | float | °C | Highest daily maximum air temperature in the window. |
+| `rh_mean_pct` | float | % | Mean relative humidity, from air temperature and dewpoint. |
+| `wbgt_mean_c` | float | °C | Mean simplified Wet Bulb Globe Temperature. |
+| `wbgt_max_c` | float | °C | Highest daily sWBGT in the window. |
+| `wbgt_days_gt28c` | integer | count of days | Days above sWBGT 28°C — ISO 7243 "high risk for heavy work". |
+| `wbgt_days_gt31c` | integer | count of days | Days above sWBGT 31°C — "very high risk, rest breaks advised". |
+
+**Data source:** ECMWF ERA5-Land daily aggregates (`ECMWF/ERA5_LAND/DAILY_AGGR`), bands `temperature_2m`, `temperature_2m_max`, `dewpoint_temperature_2m`.
+
+**Why this exists.** Land surface temperature (indicator 2) is the radiative temperature of the ground and carries **no humidity information**, which misranks these cities for HUMAN heat stress. Measured on the full run:
+
+| City | `lst_mean_c` (surface) | `t2m_mean_c` (air) | `rh_mean_pct` | `wbgt_days_gt31c` |
+|---|---|---|---|---|
+| Addis Ababa | 26.4 | 15.2 | 64% | **0** |
+| Jakarta | 35.1 | 26.6 | 81% | 85 |
+| Lagos | 29.5 | 27.1 | 83% | **421** |
+
+**Lagos has the LOWER surface temperature of the two coastal cities yet 5x Jakarta's heat-stress days**, because humidity at 83% removes the body's ability to cool by evaporation. Addis Ababa, tropical but dry highland at 15°C mean air temperature, records zero. Any analysis of the survey's `clim_heat_*` items should prefer these columns to the LST day-counts.
+
+**Processing.** Daily sWBGT uses the Australian BoM approximation `0.567*Ta + 0.393*e + 3.94`, with vapour pressure `e` from dewpoint via the Magnus formula. It pairs each day's MEAN temperature with that day's MEAN vapour pressure — pairing the two daily maxima would assume temperature and humidity peak together, which they generally do not, and would overstate stress.
+
+**Analytical notes:**
+
+- **~11km grid — this is a CITY-LEVEL control, not within-city variation.** ERA5-Land is coarser than any of these cities, so expect only a handful of distinct values per city. Do not read differences between neighbourhoods from it.
+- **Reanalysis, not observation.** ERA5-Land is a model reconstruction assimilating observations, so it has no cloud gaps — every day of the window is present, which is why these columns need no observation-count normalisation.
+- **Coastal cells are filled from neighbouring land.** ERA5-Land masks water; at 11km some coastal cells covering real business locations are classified as sea (this blanked Lagos entirely before it was handled). Masked cells are filled with a focal mean of nearby land cells.
+- **sWBGT is an approximation.** True WBGT needs radiation and wind. The simplified form is standard for heat-stress screening but should be read as a relative index, not an occupational-safety measurement.
+
+---
+
+## Indicator 12: Traffic-related Air Pollution (Sentinel-5P NO2)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `no2_mean` | float | µmol/m² | Mean tropospheric NO2 column density over the fixed 730-day window. |
+| `no2_max` | float | µmol/m² | Highest single-observation NO2 column density. |
+| `no2_median` | float | µmol/m² | Median NO2, less sensitive than the mean to individual pollution episodes. |
+| `no2_valid_obs` | integer | count | Number of valid retrievals in the window. Diagnostic, not a substantive indicator. |
+
+**Data source:** Sentinel-5P TROPOMI offline NO2 (`COPERNICUS/S5P/OFFL/L3_NO2`), band `tropospheric_NO2_column_number_density`, ~1.1km, from 2018-06-28. Raw values are mol/m², scaled by 1e6 to µmol/m².
+
+**Why this exists alongside AOD.** Aerosol Optical Depth is column-integrated **particulate** loading, mixing traffic exhaust with dust, sea salt and biomass haze. NO2 is specific to **combustion** — vehicles, generators, industry. They rank the cities differently, which is the point:
+
+| City | `aod_mean` (particulates) | `no2_mean` (combustion) |
+|---|---|---|
+| Lagos | **0.648** (worst) | 65.3 |
+| Jakarta | 0.480 | **127.3** (worst) |
+| Addis Ababa | 0.306 | 41.7 |
+
+Lagos leads on total aerosol; Jakarta leads on combustion gases by roughly 2x. Reporting either alone would give a different answer to "which city has the worst air".
+
+**Analytical notes:**
+
+- **Column density, not surface concentration.** TROPOMI measures the vertically integrated tropospheric column. Ground-level exposure depends on boundary-layer depth, so treat this as a relative ranking rather than a concentration a person breathes.
+- **~1.1km resolution** — finer than the ~5.5km rainfall grid, so it does carry some within-city gradient near traffic corridors, but far coarser than the 10m built-up and canopy layers.
+- **Request cost is dominated by the collection reduction**, not the point count (~10,200 images in a 2-year window over one city), so this indicator uses the same large-batch override as air quality: `batch_size: 1000`, `getinfo_timeout_sec: 600`.
+
+---
+
+## A dataset that was tested and REJECTED: the Global Flood Database
+
+Worth recording so it is not proposed again without new evidence.
+
+`GLOBAL_FLOOD_DB/MODIS_EVENTS/V1` maps satellite-observed inundation during recorded flood events, which sounds like the ideal counterpart to the survey's `clim_event_flood` / `clim_damage_flood` items — observed flooding rather than the topographic proxy in indicator 3. It was implemented, tested, and dropped on 2026-09-04 because **it returns zero for essentially every business**.
+
+The evidence, on Lagos:
+
+| Sample | Flooded | Mean events per pixel |
+|---|---|---|
+| 400 random **business locations** | **0 of 400** | 0.000 |
+| 400 random points in the **same bounding box** | 124 of 400 | 1.310 |
+
+The extractor was verified correct — at a known flooded pixel it returns the expected count. The problem is a resolution/semantics mismatch: MODIS at 250m detects **large open-water inundation** — lagoons, wetlands, open floodplain — which in a city is precisely the unbuilt land where businesses are not. It cannot see water in streets between buildings, which is what urban flooding means for an enterprise.
+
+A column of zeros would have been worse than no column: it reads as "no business was ever flooded", which is a false finding rather than an absent one. Use `hand_m`, `hand_flood_vulnerable` and `coastal_lowland` for flood exposure — they do discriminate (87% of Lagos businesses flagged vulnerable). Any future attempt at observed urban flooding should start from Sentinel-1 SAR, though SAR has its own difficulties in dense built-up areas from layover and shadow.
+
+---
+
 ## Derived exceedance rates (`*_frac_gt*`)
 
 Computed after the merge in `run_all.py` (`utils.add_exceedance_rates`) as pure client-side arithmetic on already-extracted columns. They are **not** in the per-indicator CSVs (`heat.csv`, `airquality.csv`) — only in `all_indicators.csv` — and are recomputed every run, so they cannot go stale.
@@ -454,8 +549,11 @@ A 10x range for MODIS LST. Lagos's `heat_days_gt40c = 0` means "0 of ~40 observe
 
 Lagos moves from last to first. The rate ranking is the correct one, corroborated independently by `aod_mean` (Lagos 0.648 > Jakarta 0.480 > Addis Ababa 0.306), which needs no normalisation. Comparing raw AOD day-counts across these cities would say Lagos has the cleanest air of the three — the opposite of the truth.
 
+Night-time heat counts get the same treatment: `heat_nights_frac_gt20c` and `heat_nights_frac_gt25c` normalise by `lst_night_valid_obs`, which has its own cloud denominator (city means: Addis Ababa 373, Lagos 154, Jakarta 78 clear nights of 730).
+
 **Deliberately absent:**
 
+- **No WBGT or NO2 rates.** ERA5-Land is a reanalysis with no cloud gaps — every day of the window is present — so `wbgt_days_gt*` are already comparable. The NO2 columns are means rather than day-counts.
 - **No rainfall rates.** CHIRPS is gap-filled rather than cloud-masked, so `rain_valid_obs` is exactly 730 for every row; a fraction would be a constant rescaling carrying no information, and `rain_days_gt*` are already directly comparable.
 - **Not annualised.** `fraction x 365` would read as "expected days per year" but extrapolates the clear-sky exceedance rate onto cloudy days, which are systematically cooler and less polluted — overstating exposure most in the cloudiest cities, reintroducing the same bias less visibly.
 

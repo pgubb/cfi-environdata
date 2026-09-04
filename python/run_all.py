@@ -41,6 +41,10 @@ INDICATORS = [
      "extract_population", "extract_population"),
     ("hrsl",        "Indicator 10: Population Density (Meta HRSL 31m)",
      "extract_hrsl", "extract_hrsl"),
+    ("heatstress",  "Indicator 11: Humid Heat Stress (ERA5-Land)",
+     "extract_heatstress", "extract_heatstress"),
+    ("no2",         "Indicator 12: Traffic Air Pollution (Sentinel-5P NO2)",
+     "extract_no2", "extract_no2"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.

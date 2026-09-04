@@ -62,6 +62,27 @@ def _build_heat_image(config: dict, start_date: str, end_date: str):
     bands.append(modis_c.count())
     band_names.append("lst_valid_obs")
 
+    # Night-time LST from the same product. Nights that stay hot are what deny
+    # physiological recovery, so they track heat morbidity better than daytime
+    # peaks alone; the survey's clim_heat_* items ask about exactly that.
+    night_band = heat_cfg.get("night_band")
+    if night_band:
+        modis_n = (
+            ee.ImageCollection(heat_cfg["dataset"])
+            .filterDate(start_date, end_date)
+            .select(night_band)
+            .map(to_celsius)
+        )
+        for nt in heat_cfg.get("night_thresholds_celsius", []):
+            bands.append(modis_n.map(lambda img, nt=nt: img.gt(nt)).sum())
+            band_names.append(f"heat_nights_gt{nt}c")
+        bands.append(modis_n.mean())
+        band_names.append("lst_night_mean_c")
+        bands.append(modis_n.min())
+        band_names.append("lst_night_min_c")
+        bands.append(modis_n.count())
+        band_names.append("lst_night_valid_obs")
+
     return ee.Image.cat(bands).rename(band_names), band_names
 
 

@@ -296,10 +296,13 @@ INDICATOR_CONFIG_KEYS = {
     "builtup":     ["builtup"],
     "population":  ["population"],
     "hrsl":        ["hrsl"],
+    "heatstress":  ["heatstress", "time_window"],
+    "no2":         ["no2", "time_window"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.
-TIME_SERIES_INDICATORS = {"heat", "rainfall", "airquality", "nightlights"}
+TIME_SERIES_INDICATORS = {"heat", "rainfall", "airquality", "nightlights",
+                          "heatstress", "no2"}
 
 # Keys that affect only speed, never results. Tuning these must NOT invalidate
 # a cache — otherwise raising a batch size silently forces a multi-hour rerun.
@@ -380,18 +383,29 @@ def save_manifest(manifest: dict, config: dict):
 # Rainfall is deliberately NOT included: CHIRPS is gap-filled rather than
 # cloud-masked, so rain_valid_obs is exactly 730 everywhere and a fraction
 # would be a constant rescaling carrying no extra information.
+# {count-column prefix: (denominator column, rate-column prefix)}
+#
+# The rate prefix is given EXPLICITLY rather than derived by string surgery on
+# the count name. An earlier version did `col.replace("_days_gt", "_frac_gt")`,
+# which silently produced the SAME name for heat_nights_gt* (no "_days_gt"
+# substring) and overwrote the counts with their own rates in place.
 RATE_DENOMINATORS = {
-    "heat_days_gt": "lst_valid_obs",
-    "aod_days_gt": "aod_valid_obs",
+    "heat_days_gt":   ("lst_valid_obs", "heat_frac_gt"),
+    "heat_nights_gt": ("lst_night_valid_obs", "heat_nights_frac_gt"),
+    "aod_days_gt":    ("aod_valid_obs", "aod_frac_gt"),
 }
+# wbgt_days_gt* and the NO2 summaries are deliberately absent: ERA5-Land is a
+# reanalysis with no cloud gaps (every day present), and the NO2 columns are
+# means rather than day-counts, so neither needs an observation-count
+# denominator.
 
 
 def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
-    """Add `*_frac_gt*` columns beside each `*_days_gt*` count.
+    """Add `*_frac_gt*` columns beside each `*_days_gt*` / `*_nights_gt*` count.
 
-    Each is the share of that point's OBSERVED days exceeding the threshold,
-    in [0, 1]. NaN where the observation count is zero or missing — a point
-    with no observations has an undefined rate, not a rate of zero.
+    Each is the share of that point's OBSERVED days (or nights) exceeding the
+    threshold, in [0, 1]. NaN where the observation count is zero or missing —
+    a point with no observations has an undefined rate, not a rate of zero.
 
     Deliberately NOT annualised (e.g. fraction x 365). That would extrapolate
     the clear-sky exceedance rate to cloudy days, which are systematically
@@ -399,12 +413,17 @@ def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
     cloudiest cities.
     """
     out = merged.copy()
-    for prefix, denom_col in RATE_DENOMINATORS.items():
+    for prefix, (denom_col, rate_prefix) in RATE_DENOMINATORS.items():
         if denom_col not in out.columns:
             continue
         denom = out[denom_col].where(out[denom_col] > 0)  # 0 and NaN -> NaN
         for col in [c for c in merged.columns if c.startswith(prefix)]:
-            rate_col = col.replace("_days_gt", "_frac_gt")
+            rate_col = rate_prefix + col[len(prefix):]
+            # A rate must never land on top of the count it is derived from.
+            if rate_col == col:
+                raise ValueError(
+                    f"Rate column for {col!r} resolves to the same name; "
+                    f"fix the rate prefix for {prefix!r} in RATE_DENOMINATORS.")
             values = out[col] / denom
             if rate_col in out.columns:
                 out[rate_col] = values

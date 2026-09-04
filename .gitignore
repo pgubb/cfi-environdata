@@ -45,3 +45,8 @@ data/output/extraction_manifest.json
 # Environment files
 .env
 .env.local
+
+# R session leftovers (registry_environment.R is validated with Rscript)
+.Rhistory
+.RData
+.Rproj.user/
