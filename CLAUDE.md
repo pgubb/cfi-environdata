@@ -32,10 +32,11 @@ python/
   extract_airquality.py      # Indicator 6: MODIS MAIAC AOD (per city)
   extract_nightlights.py     # Indicator 7: VIIRS monthly (per fieldwork_date)
   extract_builtup.py         # Indicator 8: JRC GHSL 10m (50m + 150m buffers)
-  run_all.py                 # Orchestrator: runs all 8 + merges
+  extract_population.py      # Indicator 9: WorldPop 100m density (50m + 150m buffers)
+  run_all.py                 # Orchestrator: runs all 9 + merges
   blocks/                    # Block-level aggregation pipeline
     utils_blocks.py          # Block polygon loading, GeoJSON→FC, batching
-    extract_*_blocks.py      # Per-indicator zonal extraction (same 8 indicators)
+    extract_*_blocks.py      # Per-indicator zonal extraction (the first 8 indicators)
     run_all_blocks.py        # Block pipeline orchestrator
 data/
   input/                     # Business coordinate CSVs

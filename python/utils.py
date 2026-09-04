@@ -294,6 +294,7 @@ INDICATOR_CONFIG_KEYS = {
     "airquality":  ["airquality", "time_window"],
     "nightlights": ["nightlights", "time_window"],
     "builtup":     ["builtup"],
+    "population":  ["population"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.

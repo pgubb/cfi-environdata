@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 49 columns: 7 passthrough from the input, 42 GEE-derived.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 52 columns: 7 passthrough from the input, 45 GEE-derived.
 
-**Last generated:** 2026-08-26, 10,989 businesses across Addis Ababa (4,262), Jakarta (3,714) and Lagos (3,013). This was a three-city test run — Brazil and India were excluded via `gsmm.include_countries` in `config.yaml`. The full five-city frame is 20,124 listings.
+**Last generated:** 2026-09-04 (indicators 1-8 extracted 2026-08-26), 10,989 businesses across Addis Ababa (4,262), Jakarta (3,714) and Lagos (3,013). This was a three-city test run — Brazil and India were excluded via `gsmm.include_countries` in `config.yaml`. The full five-city frame is 20,124 listings.
 
 > **These rows carry exact business coordinates.** `data/input/gsmm_listings.csv` and any file derived from it are git-ignored and must not be copied into `cfi-map2r2-data`. Only the derived indicator columns are safe to share back — they describe the neighbourhood, not the address. See the header of `cfi-map2r2-data/R/prep_enumeration.R`.
 
@@ -332,6 +332,41 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 
 ---
 
+## Indicator 9: Population Density
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `pop_density_50m` | float | people per km² | Mean residential population density within a 50m radius buffer. **Sub-pixel** — see the note below. |
+| `pop_density_150m` | float | people per km² | Mean residential population density within a 150m radius buffer (~8 WorldPop cells). The buffer to prefer for spatial analysis. |
+| `pop_year` | integer | year | WorldPop vintage the values came from. Constant across all rows (2020). |
+
+**Data source:** WorldPop Global Project, unconstrained global mosaic, 100m.
+- GEE asset: `WorldPop/GP/100m/pop`, band `population`
+- Resolution: 0.000833333° ≈ 92.77m at the equator
+- Coverage: **2000–2020 in Earth Engine.** The catalog page's prose mentions 2021, but `aggregate_array("year")` on the collection returns a maximum of 2020 (verified 2026-09-04). All five study countries have a 2020 image.
+- Reference: Stevens, F.R., Gaughan, A.E., Linard, C., Tatem, A.J. (2015). "Disaggregating census data for population mapping using Random Forests with remotely-sensed and ancillary data." *PLOS ONE*, 10(2), e0107042.
+
+**Processing:**
+
+1. **Year and area filtering:** The collection is filtered to `population.year` and to the city's bounding box, then mosaicked. WorldPop ships **one image per country per year**, so `filterBounds` is required — without it the mosaic spans every country in the collection.
+
+2. **Count → density.** The `population` band is the *estimated number of people residing in each grid cell*, i.e. a **count, not a density**. It is converted with `population / ee.Image.pixelArea() × 1e6` to give people per km². `pixelArea()` is used rather than a constant ~92.77m cell size because WorldPop is on a geographic (lat/lon) grid whose cells narrow toward the poles — a constant would bias Addis Ababa (9°N) relative to Jakarta (6°S). Verified against a manual computation at a Lagos point: 48.6291 people/cell ÷ 8,538.4 m² × 1e6 = 5,695.3 people/km², matching the pipeline exactly.
+
+3. **Zonal reduction:** `ee.Reducer.mean()` within each buffer at 93m scale.
+
+**Analytical notes:**
+
+- **`pop_density_50m` is sub-pixel.** A 50m-radius buffer covers 7,854 m², smaller than one ~8,600 m² WorldPop cell, so this column is effectively the value of the containing cell rather than a spatial average. It is retained for consistency with the canopy and built-up buffer pairs, but **`pop_density_150m` (~8 cells) is the one carrying real neighbourhood averaging.** Measured correlation between the two on the 2026-09-04 run: **r = 0.9987** — the 50m column carries essentially no independent information. Prefer the 150m column, and note it also has far fewer missing values (see *Missing data*).
+- **Residential, not daytime, population.** WorldPop disaggregates *census* counts, which record where people sleep. For a business's customer catchment this understates commercial districts and overstates dormitory areas — a market with few residents but heavy footfall will read as low density. Treat it as a measure of residential context, not of foot traffic.
+- **Modelled, not observed.** Values come from a Random Forest dasymetric redistribution of census totals using geospatial covariates (including built-up surface). It inherits the age and accuracy of each country's underlying census, which differs substantially across the five study countries. Within-city *relative* differences are more defensible than cross-country absolute comparisons.
+- **Related to `builtup_fraction`, but not redundant.** Built-up surface is among the covariates WorldPop uses to redistribute census counts, so the two are not independent by construction. Measured on the 2026-09-04 run, `pop_density_150m` vs `builtup_fraction_150m` correlate at **r = 0.41** — moderate. Both can reasonably enter one model; check VIF rather than assuming either way.
+- **2020 vintage vs 2026 fieldwork.** A six-year gap. Areas that urbanised after 2020 will be understated.
+- **Deriving a headcount:** the estimated residents within a buffer is `pop_density_150m × π × 0.150²` = `pop_density_150m × 0.0706858` (km²). Not stored as a column since it is an exact linear transform.
+
+**On the pinned year.** `population.year` is set explicitly rather than resolved to "latest" at runtime. Runtime resolution would change the extracted values *without changing the config fingerprint*, so a rerun after WorldPop published a new year would silently mix vintages in one file. The extractor instead **warns** when a newer year exists, leaving the decision (and the cache invalidation) explicit. Bumping the year changes the fingerprint and triggers a clean recompute of this indicator only.
+
+---
+
 ## Missing data
 
 Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is fully populated.
@@ -340,6 +375,8 @@ Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is f
 |---|---|---|
 | `jrc_recurrence` | 10,970 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
 | `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 24 (0.2%) | One MODIS pixel permanently masked. See below. |
+| `pop_density_50m` | 101 (0.9%) | WorldPop unmapped on the North Jakarta coast. See below. |
+| `pop_density_150m` | 28 (0.25%) | Same cause; the wider buffer recovers 73 of the 101. |
 
 **The 24 masked heat rows.** All 24 are Lagos businesses at 17 distinct coordinates within a ~200 m cluster near 6.5050°N, 3.5780°E — the Lekki/Lagos lagoon fringe — all at 3 m elevation. `lst_valid_obs` is `NaN` rather than `0`, meaning the 1 km MODIS pixel was masked in *every* image across the full two years, not that no hot days occurred.
 
@@ -351,6 +388,12 @@ The coordinates are sound, and the cause is a resolution mismatch rather than ba
 - But all 24 are `hand_flood_vulnerable = 1` and `coastal_lowland = 1`, with mean HAND 1.7 m.
 
 `MOD11A1` is a **land** surface temperature product operating on a 1 km land mask. A business on a narrow strip of land fringed by lagoon reads as land at 30 m but sits inside a 1 km pixel that is majority water. Treat these as structurally missing, not as zeros.
+
+**The masked WorldPop cells (North Jakarta coast).** All 101 affected businesses are in Jakarta, inside a ~1.4 x 3.2 km coastal strip (lat -6.1605 to -6.1476, lon 106.8052 to 106.8341, 98 distinct coordinates). Their profile is distinctive: mean elevation 6.6 m against 919 m for the rest of the sample, mean HAND 1.6 m, 85% flagged `coastal_lowland`, and roughly two-thirds sitting on JRC-detected water (`jrc_max_extent = 1`).
+
+**These are masked, not zero.** Sampling the raw `population` band at these points returns no value at all rather than 0, i.e. WorldPop did not estimate a population there — it is not a finding that nobody lives there. **Do not impute 0**; that would assert an empty neighbourhood in what is in fact densely built-up land (`builtup_fraction_150m` averages 42.6% at these points, indistinguishable from the rest of the sample).
+
+The likely cause is WorldPop's land/coastline mask at 100 m failing to cover reclaimed or newly built coastal land in North Jakarta. Supporting evidence: the 150 m buffer recovers 73 of the 101, exactly what an edge-of-mask artefact predicts as the buffer overlaps neighbouring valid cells, and unlike a systematic failure over the area. These are a different set of businesses from the 24 Lagos points missing heat data — the two gaps do not overlap at all.
 
 ---
 

@@ -36,6 +36,8 @@ INDICATORS = [
      "extract_nightlights", "extract_nightlights"),
     ("builtup",     "Indicator 8: Built-up Surface Fraction (GHSL)",
      "extract_builtup", "extract_builtup"),
+    ("population",  "Indicator 9: Population Density (WorldPop 100m)",
+     "extract_population", "extract_population"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.

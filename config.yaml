@@ -153,6 +153,25 @@ builtup:
 time_window:
   analysis_end_date: "2026-07-31"
 
+# ---------- Indicator 9: Population Density ----------
+population:
+  # WorldPop Global Project, 100m unconstrained population counts.
+  dataset: "WorldPop/GP/100m/pop"
+  band: "population"
+  # PINNED YEAR. The catalog page's description mentions 2021, but the GEE
+  # collection's newest images are 2020 (verified 2026-09-04 by querying
+  # aggregate_array("year")). All five study countries have a 2020 image.
+  # The extractor warns if a newer year appears, so this stays honest without
+  # making the cache silently data-dependent — resolving "latest" at runtime
+  # would change values without changing the config fingerprint.
+  year: 2020
+  # The band is people PER GRID CELL, not a density. The extractor divides by
+  # ee.Image.pixelArea() to produce people per km2, which is comparable across
+  # latitudes (cells shrink toward the poles).
+  buffer_radii_m: [50, 150]
+  # Native grid is 0.000833333 deg ~= 92.77m at the equator.
+  scale_m: 93
+
 # ---------- GEE Processing ----------
 gee:
   # Project ID for Earth Engine (set to your GEE cloud project)
