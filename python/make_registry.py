@@ -231,6 +231,20 @@ ROWS = [
     ("hrsl_density_50m", "Population density within 50m (Meta HRSL)", "env_pop", "continuous",
      "Community GEE asset: projects/sat-io/open-datasets/hrsl/hrslpop",
      "Residents per square kilometre within 50 metres, from Meta's High Resolution Settlement Layer (~31m, building-footprint constrained). Despite the finer grid it still correlates with hrsl_density_150m at r = 0.9974 - the redundancy comes from the spatial autocorrelation of population, not pixel size - so prefer the 150m column."),
+    # ---- building density (Open Buildings 2.5D) ----
+    ("building_count_50m", "Buildings within 50m", "env_built", "continuous",
+     "GEE: GOOGLE/Research/open-buildings-temporal/v1, 2023 | INDEX, not a census",
+     "Number of buildings within 50 metres. Largely INDEPENDENT of builtup_fraction_50m (r = +0.17), so it does not restate the built-up indicator: counting discrete structures measures something different from the share of ground they cover. RELATIVE MEASURE ONLY: validated against Open Buildings v3 polygons at r=0.90 but running ~25% HIGH in level, so use it to compare locations, not to state how many buildings are present."),
+    ("building_count_150m", "Buildings within 150m", "env_built", "continuous",
+     "GEE: GOOGLE/Research/open-buildings-temporal/v1, 2023 | INDEX, not a census",
+     "Number of buildings within 150 metres. City means: Jakarta 454, Addis Ababa 394, Lagos 347. Only moderately correlated with builtup_fraction_150m (r = +0.32), so it can reasonably enter a model alongside it. RELATIVE MEASURE ONLY - correlates with polygon ground truth at r=0.90 but runs ~25% high in level. Do not quote as an absolute count."),
+    ("building_height_mean_150m", "Mean building height (m)", "env_built", "continuous",
+     "GEE: GOOGLE/Research/open-buildings-temporal/v1, 2023",
+     "Mean height of BUILDINGS within 150 metres, averaged over building pixels only so open ground does not drag it toward zero. THE ONLY VERTICAL MEASURE in this pipeline - built-up fraction, canopy and population are all planar - so it carries information none of them do. City means: Addis Ababa 7.5m, Jakarta 7.1m, Lagos 6.4m. Slightly NEGATIVELY correlated with builtup_fraction_150m (r = -0.15): the most densely covered ground here tends to carry lower buildings."),
+    ("building_mean_area_150m", "Typical building footprint (m2)", "env_built", "continuous",
+     "Derived: built area / building count | INDEX, not a measurement",
+     "Typical building footprint within 150 metres. Together with building count this separates one large structure from many small ones, which builtup_fraction cannot: all three cities sit near 42% built-up, yet footprints run Addis Ababa 64 m2, Jakarta 83, Lagos 92 - a plausible signature of small-plot informal development in Addis Ababa. RELATIVE MEASURE ONLY: correlates with polygon ground truth at r=0.85 and preserves the city rank order exactly, but runs ~37% LOW in level (polygons give 91/125/151 m2 for the same buffers). Compare locations with it; do not quote the value as a measured footprint. Missing where the buffer contains no buildings - undefined, not zero."),
+
     # ---- humid heat stress (ERA5-Land) ----
     ("t2m_mean_c", "Mean air temperature (C)", "env_heatstress", "continuous",
      "GEE: ECMWF/ERA5_LAND/DAILY_AGGR | ~11km, CITY-LEVEL",

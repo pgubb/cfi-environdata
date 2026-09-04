@@ -187,6 +187,37 @@ no2:
   batch_size: 1000
   getinfo_timeout_sec: 600
 
+# ---------- Indicator 13: Building Density (Google Open Buildings 2.5D) ----------
+buildings:
+  # builtup_fraction (indicator 8) is the SHARE OF GROUND covered by built
+  # surface: it cannot tell one warehouse from forty kiosks at the same
+  # coverage. This counts discrete structures and measures their height and
+  # typical footprint, which is the distinction that matters for a study of
+  # micro and small enterprises.
+  dataset: "GOOGLE/Research/open-buildings-temporal/v1"
+  # PINNED YEAR. The collection runs 2016-2023 annually; 2023 is the newest and
+  # all three cities are fully covered. Pinned rather than resolved at runtime
+  # for the same reason as population.year: "latest" would change values
+  # without changing the config fingerprint and silently mix vintages.
+  year: 2023
+  bands:
+    count: "building_fractional_count"
+    height: "building_height"
+    presence: "building_presence"
+  buffer_radii_m: [50, 150]
+  # Native grid is 0.5m - by far the finest data in this pipeline.
+  native_scale_m: 0.5
+  # Reduction scale. A 150m buffer holds ~283,000 native pixels, so reducing at
+  # 0.5m costs ~10x more than at 2m for an IDENTICAL result: every statistic
+  # here is a MEAN, and the count is recovered from the mean analytically
+  # (see the extractor), which makes it scale-independent. Measured on 50
+  # Lagos points: 18.4s at 0.5m vs 1.8s at 2m.
+  scale_m: 2
+  # Pixels whose building probability exceeds this count as "building" when
+  # averaging height, so building_height_mean is the mean height OF BUILDINGS
+  # rather than a height diluted by open ground.
+  height_presence_threshold: 0.5
+
 # ---------- Time-series analysis window ----------
 # Heat, rainfall, air quality and nightlights each reduce an image collection
 # over a trailing window, then sample the result at each point.

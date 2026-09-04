@@ -45,6 +45,8 @@ INDICATORS = [
      "extract_heatstress", "extract_heatstress"),
     ("no2",         "Indicator 12: Traffic Air Pollution (Sentinel-5P NO2)",
      "extract_no2", "extract_no2"),
+    ("buildings",   "Indicator 13: Building Density (Open Buildings 2.5D)",
+     "extract_buildings", "extract_buildings"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.

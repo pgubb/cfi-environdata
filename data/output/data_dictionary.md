@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 81 columns: 7 passthrough from the input, 66 GEE-derived, and 8 derived exceedance rates.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 85 columns: 7 passthrough from the input, 70 GEE-derived, and 8 derived exceedance rates.
 
-**Last generated:** 2026-09-04 (12 indicators), 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
+**Last generated:** 2026-09-04 (13 indicators), 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
 
 **Input provenance changed 2026-09-04.** The pipeline now consumes `cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv` rather than reading the raw GSMM `.xlsx` exports itself. That repo owns every preparation and cleaning step — authoritative export selection, de-duplication, date parsing, decimal normalisation — so those rules live in one place instead of being reimplemented here. Validation of the switch: for the 10,989 businesses extracted under the old path, the prepared coordinates are byte-identical (max difference 0.00000000) with all listing dates matching.
 
@@ -504,6 +504,59 @@ Lagos leads on total aerosol; Jakarta leads on combustion gases by roughly 2x. R
 - **Column density, not surface concentration.** TROPOMI measures the vertically integrated tropospheric column. Ground-level exposure depends on boundary-layer depth, so treat this as a relative ranking rather than a concentration a person breathes.
 - **~1.1km resolution** — finer than the ~5.5km rainfall grid, so it does carry some within-city gradient near traffic corridors, but far coarser than the 10m built-up and canopy layers.
 - **Request cost is dominated by the collection reduction**, not the point count (~10,200 images in a 2-year window over one city), so this indicator uses the same large-batch override as air quality: `batch_size: 1000`, `getinfo_timeout_sec: 600`.
+
+---
+
+## Indicator 13: Building Density (Google Open Buildings 2.5D)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `building_count_50m` | float | buildings | Number of buildings within a 50m radius. |
+| `building_count_150m` | float | buildings | Number of buildings within a 150m radius. |
+| `building_height_mean_150m` | float | metres | Mean height of BUILDINGS within 150m (averaged over building pixels only, not diluted by open ground). |
+| `building_mean_area_150m` | float | m² | Typical building footprint within 150m, derived as built area ÷ building count. |
+
+**Data source:** Google Open Buildings 2.5D Temporal v1 (`GOOGLE/Research/open-buildings-temporal/v1`), year **2023**, bands `building_fractional_count`, `building_height`, `building_presence`. Native resolution **0.5m** — the finest data in this pipeline by a wide margin.
+
+**Why this exists alongside `builtup_fraction`.** GHSL measures the SHARE OF GROUND covered by built surface and cannot distinguish one large warehouse from forty small kiosks at the same coverage. All three cities sit near 42% built-up, yet they differ sharply once structures are counted:
+
+| City | `building_count_150m` | `building_height_mean_150m` | `building_mean_area_150m` |
+|---|---|---|---|
+| Addis Ababa | 394 | 7.5 m | 64 m² |
+| Jakarta | 454 | 7.1 m | 83 m² |
+| Lagos | 347 | 6.4 m | 92 m² |
+
+Addis Ababa has the most buildings and the smallest footprints — dense small-plot development — while Lagos has the fewest and largest. That axis is invisible in `builtup_fraction`.
+
+> ### These are indices, not censuses — validated, and biased in level
+>
+> Validated against Open Buildings **v3 polygons** (a different product: actual building outlines with measured areas) counted inside the identical 150m buffers, 36 businesses across all three cities:
+>
+> | Metric | Correlation with polygons | Median ratio raster/polygon |
+> |---|---|---|
+> | Building count | **0.900** | **1.25** (raster ~25% HIGHER) |
+> | Mean footprint area | **0.845** | **0.63** (raster ~37% LOWER) |
+>
+> The bias is consistent across cities (count 1.17–1.26, area 0.60–0.68), so it behaves as a roughly constant scaling factor rather than a city-specific distortion, and **the city rank order is preserved exactly** in both metrics.
+>
+> **Use these for relative comparison — between businesses, neighbourhoods or cities — where they are well supported. Do NOT quote the absolute values**, e.g. "331 buildings within 150m" or "mean footprint 100 m²": the polygon product says 257 and 150 m² for the same Lagos buffers. If an analysis needs defensible absolute counts or areas, query the v3 polygons directly.
+
+**Processing:**
+
+1. **Year and area filtering:** the collection is tiled by UTM zone and year, so it is filtered to `buildings.year` and the city bounds, then mosaicked.
+2. **All three bands are reduced with `ee.Reducer.mean()`**, and the count is recovered analytically as `mean_fractional_count × (buffer_area / 0.5²)`.
+
+> **Why mean-and-derive rather than a plain sum.** A `sum` reducer is NOT scale-independent here: GEE averages values when resampling, so summing at 2m returns exactly (2/0.5)² = 16x less than summing at native 0.5m (measured: 20.85 vs 333.63 on the same buffers). Deriving the count from the MEAN removes that dependence, which lets the reduction run at 2m for a ~10x speedup with an identical result — 18.4s vs 1.8s per 50 points. Any change to `buildings.scale_m` is therefore safe; changing the reducer to `sum` would not be.
+
+3. **Height is masked** to pixels whose `building_presence` exceeds `height_presence_threshold` (0.5), so the mean is over buildings rather than over the whole buffer.
+4. **Mean footprint** is `mean_presence × buffer_area ÷ count`, and NaN where the buffer contains no buildings — undefined rather than zero.
+
+**Analytical notes:**
+
+- **All four columns are largely INDEPENDENT of `builtup_fraction_150m`**, which was not the expected result. Measured on the full run: `building_count_150m` r = +0.32, `building_count_50m` +0.17, `building_mean_area_150m` +0.14, `building_height_mean_150m` **−0.15**. Counting discrete structures turns out to measure something quite different from the share of ground they cover, so these do not merely restate the built-up indicator — they can reasonably enter a model alongside it.
+- **`building_height_mean_150m` is the only vertical measure in the pipeline** — built-up fraction, canopy, population and nightlights are all planar. Its slight negative correlation with built-up fraction is interesting in itself: the most densely *covered* ground here tends to carry lower buildings.
+- **2023 vintage against 2026 fieldwork** — three years stale, but the most recent building data available and newer than GHSL's 2020 built-up surface.
+- **Only the 150m buffer carries height and area.** At 50m the buffer holds too few buildings for a stable average; the count is still reported at both radii.
 
 ---
 

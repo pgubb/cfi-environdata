@@ -35,7 +35,10 @@ python/
   extract_builtup.py         # Indicator 8: JRC GHSL 10m (50m + 150m buffers)
   extract_population.py      # Indicator 9: WorldPop 100m density (50m + 150m buffers)
   extract_hrsl.py            # Indicator 10: Meta HRSL 31m density (50m + 150m buffers)
-  run_all.py                 # Orchestrator: runs all 10 + merges
+  extract_heatstress.py      # Indicator 11: ERA5-Land humid heat stress (sWBGT)
+  extract_no2.py             # Indicator 12: Sentinel-5P tropospheric NO2
+  extract_buildings.py       # Indicator 13: Open Buildings 2.5D count/height/size
+  run_all.py                 # Orchestrator: runs all 13 + merges
   blocks/                    # Block-level aggregation pipeline
     utils_blocks.py          # Block polygon loading, GeoJSON→FC, batching
     extract_*_blocks.py      # Per-indicator zonal extraction (the first 8 indicators)

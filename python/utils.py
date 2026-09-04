@@ -298,6 +298,7 @@ INDICATOR_CONFIG_KEYS = {
     "hrsl":        ["hrsl"],
     "heatstress":  ["heatstress", "time_window"],
     "no2":         ["no2", "time_window"],
+    "buildings":   ["buildings"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.
