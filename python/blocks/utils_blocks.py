@@ -13,7 +13,7 @@ import geopandas as gpd
 import pandas as pd
 
 # Allow imports from parent package (python/)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # safe_getinfo and its settings are re-exported from the point pipeline's utils
 # rather than duplicated here. This file previously carried its own copy, which
 # drifted: its `with ThreadPoolExecutor(...)` blocked in __exit__ until the
@@ -36,61 +36,62 @@ DEFAULT_COUNTRY_CITY_MAP = {
 }
 
 def load_blocks(config: dict) -> gpd.GeoDataFrame:
-    """Load all block polygons from GeoJSON files.
+    """Load sampling-grid block polygons for the configured cities.
 
-    Reads one GeoJSON per country from the configured source directory,
-    adds a ``city`` column derived from the country directory name, and
-    returns a single GeoDataFrame with all blocks across cities.
+    Reads one GeoJSON per country from the blockexplorer repo, adds a `city`
+    column, and prefixes block_id with the city name — the raw files use simple
+    numeric ids that collide across cities, and every downstream merge is on
+    block_id alone.
 
-    Block IDs are prefixed with the city name to ensure uniqueness across
-    cities (the raw GeoJSON files use simple numeric IDs that collide).
+    Honours `blocks.include_cities` (null = all five) and
+    `blocks.final_sample_only`. The latter is false by default: the flag marks
+    only ~100 blocks per city, which is the fieldwork sample, not enough to draw
+    a citywide map.
     """
     blocks_cfg = config["blocks"]
-    source_dir = Path(__file__).parent.parent.parent / blocks_cfg["source_dir"]
+    source_dir = Path(__file__).resolve().parent.parent.parent / blocks_cfg["source_dir"]
     block_id_field = blocks_cfg["block_id_field"]
     country_city = blocks_cfg.get("country_city_map", DEFAULT_COUNTRY_CITY_MAP)
+    wanted = blocks_cfg.get("include_cities") or list(country_city.values())
+    unknown = [c for c in wanted if c not in country_city.values()]
+    if unknown:
+        raise ValueError(f"Unknown cities in blocks.include_cities: {unknown}")
 
     frames = []
     for country_dir, city in country_city.items():
+        if city not in wanted:
+            continue
         geojson_path = source_dir / country_dir / "final_sampling_grid_2026.geojson"
         if not geojson_path.exists():
-            print(f"  Warning: {geojson_path} not found, skipping {city}")
-            continue
+            # include_cities is an explicit request, so a missing file is an
+            # error: silently continuing would write an output file quietly
+            # missing a city the caller asked for.
+            raise FileNotFoundError(
+                f"{city} was requested via blocks.include_cities but "
+                f"{geojson_path} does not exist.")
 
         gdf = gpd.read_file(geojson_path)
+        n_all = len(gdf)
+        if blocks_cfg.get("final_sample_only") and "in_final_sample" in gdf:
+            gdf = gdf[gdf["in_final_sample"].astype(bool)]
 
-        # Prefix block_id with city to ensure global uniqueness
         gdf[block_id_field] = city + "_" + gdf[block_id_field].astype(str)
         gdf["city"] = city
-
-        frames.append(gdf)
-        print(f"  Loaded {len(gdf)} blocks for {city}")
+        frames.append(gdf[[block_id_field, "city", "geometry"]])
+        note = f" (of {n_all:,} in the grid)" if len(gdf) != n_all else ""
+        print(f"  Loaded {len(gdf):,} blocks for {city}{note}")
 
     if not frames:
         raise FileNotFoundError(
-            f"No block GeoJSON files found in {source_dir}. "
-            f"Expected subdirectories: {list(country_city.keys())}"
-        )
+            f"No block GeoJSON found in {source_dir} for cities {wanted}.")
 
     all_blocks = pd.concat(frames, ignore_index=True)
-    print(f"Total: {len(all_blocks)} blocks across {all_blocks['city'].nunique()} cities")
+    if not all_blocks[block_id_field].is_unique:
+        dupes = int(all_blocks[block_id_field].duplicated().sum())
+        raise ValueError(f"{dupes} duplicate block ids after city prefixing.")
+    print(f"Total: {len(all_blocks):,} blocks across "
+          f"{all_blocks['city'].nunique()} cities")
     return all_blocks
-
-
-def blocks_to_fc(gdf: gpd.GeoDataFrame, block_id_field: str = "block_id") -> ee.FeatureCollection:
-    """Convert a GeoDataFrame of block polygons to a GEE FeatureCollection.
-
-    Each row becomes an ee.Feature with the polygon geometry and block_id
-    as a property.
-    """
-    features = []
-    for _, row in gdf.iterrows():
-        geo_if = row.geometry.__geo_interface__
-        geom = ee.Geometry(geo_if)
-        features.append(ee.Feature(geom, {
-            "block_id": str(row[block_id_field]),
-        }))
-    return ee.FeatureCollection(features)
 
 
 def batch_blocks(gdf: gpd.GeoDataFrame, batch_size: int):
@@ -99,29 +100,30 @@ def batch_blocks(gdf: gpd.GeoDataFrame, batch_size: int):
         yield gdf.iloc[start:start + batch_size]
 
 
-def get_analysis_window(config: dict, trailing_years: int = 2):
-    """Return (start_date, end_date) strings for the fixed analysis period.
+def get_analysis_window(config: dict, trailing_years: int = None,
+                       trailing_months: int = None):
+    """Return (start_date, end_date) for the analysis window.
 
-    Uses blocks.analysis_end_date from config and the indicator's
-    trailing_years to compute the start date.
+    Reads time_window.analysis_end_date — THE SAME SETTING THE POINT PIPELINE
+    USES. This pipeline previously had its own blocks.analysis_end_date, which
+    silently put block maps and business-level values on different periods.
     """
-    end_date = config["blocks"]["analysis_end_date"]
+    if (trailing_years is None) == (trailing_months is None):
+        raise ValueError("Pass exactly one of trailing_years / trailing_months")
+    end_date = (config.get("time_window", {}) or {}).get("analysis_end_date")
+    if not end_date:
+        raise ValueError(
+            "time_window.analysis_end_date must be set for the block pipeline; "
+            "blocks have no fieldwork date to anchor a window to.")
     end = pd.Timestamp(end_date)
-    start = end - pd.DateOffset(years=trailing_years)
-    return start.strftime("%Y-%m-%d"), end_date
-
-
-def get_analysis_window_months(config: dict, trailing_months: int = 12):
-    """Return (start_date, end_date) strings for a month-based window."""
-    end_date = config["blocks"]["analysis_end_date"]
-    end = pd.Timestamp(end_date)
-    start = end - pd.DateOffset(months=trailing_months)
-    return start.strftime("%Y-%m-%d"), end_date
+    offset = (pd.DateOffset(years=trailing_years) if trailing_years is not None
+              else pd.DateOffset(months=trailing_months))
+    return (end - offset).strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
 def save_block_output(df: pd.DataFrame, name: str, config: dict):
     """Save a block-level DataFrame to the configured block output directory."""
-    out_dir = Path(__file__).parent.parent.parent / config["blocks"]["output_dir"]
+    out_dir = Path(__file__).resolve().parent.parent.parent / config["blocks"]["output_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{name}.csv"
     df.to_csv(out_path, index=False)
@@ -133,23 +135,26 @@ def save_block_output(df: pd.DataFrame, name: str, config: dict):
 
 def _checkpoint_path(indicator_name: str, config: dict) -> Path:
     """Return the path for an indicator's checkpoint CSV."""
-    out_dir = Path(__file__).parent.parent.parent / config["blocks"]["output_dir"]
+    out_dir = Path(__file__).resolve().parent.parent.parent / config["blocks"]["output_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / f".checkpoint_{indicator_name}.csv"
 
 
-def load_checkpoint(indicator_name: str, config: dict) -> pd.DataFrame | None:
-    """Load a partial-results checkpoint if it exists.
+def load_checkpoint(indicator_name: str, config: dict,
+                    verbose: bool = True) -> pd.DataFrame | None:
+    """Load a partial-results checkpoint, or None if there is none.
 
-    Returns a DataFrame of already-processed rows, or None if no
-    checkpoint exists.
+    Signature mirrors utils.load_checkpoint (the point pipeline's) so the two
+    are interchangeable; `verbose` exists so reading the checkpoint back at the
+    END of a run does not print a misleading "resuming" line.
     """
     cp = _checkpoint_path(indicator_name, config)
-    if cp.exists():
-        df = pd.read_csv(cp)
-        print(f"  Resuming from checkpoint: {len(df)} blocks already processed")
-        return df
-    return None
+    if not cp.exists():
+        return None
+    df = pd.read_csv(cp, dtype={"block_id": str})
+    if verbose and len(df):
+        print(f"  Resuming from checkpoint: {len(df):,} blocks already done")
+    return df
 
 
 def append_checkpoint(rows: list[dict], indicator_name: str, config: dict):
@@ -171,15 +176,3 @@ def clear_checkpoint(indicator_name: str, config: dict):
         cp.unlink()
 
 
-def filter_remaining_blocks(
-    blocks_gdf: gpd.GeoDataFrame,
-    checkpoint_df: pd.DataFrame | None,
-    block_id_field: str = "block_id",
-) -> gpd.GeoDataFrame:
-    """Return only blocks that haven't been processed yet."""
-    if checkpoint_df is None or checkpoint_df.empty:
-        return blocks_gdf
-    done_ids = set(checkpoint_df["block_id"])
-    remaining = blocks_gdf[~blocks_gdf[block_id_field].isin(done_ids)]
-    print(f"  {len(remaining)} blocks remaining after checkpoint filter")
-    return remaining

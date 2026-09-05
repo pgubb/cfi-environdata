@@ -327,8 +327,10 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 
 | Column | Type | Units | Description |
 |---|---|---|---|
-| `builtup_fraction_50m` | float | proportion (0–1) | Mean fraction of built-up (impervious) surface within a 50m radius buffer around the business point. |
-| `builtup_fraction_150m` | float | proportion (0–1) | Mean fraction of built-up surface within a 150m radius buffer. A value of 0.5 means 50% of the area within 150m is classified as built-up. |
+| `builtup_fraction_50m` | float | proportion (0–1) | Proportion of ground covered by built surface within a 50m radius buffer. |
+| `builtup_fraction_150m` | float | proportion (0–1) | Proportion of ground covered by built surface within a 150m radius buffer. 0.5 means half the area within 150m is built.
+
+> **UNITS CORRECTED 2026-09-05.** `GHS_BUILT_S`'s `built_surface` band holds SQUARE METRES of built surface per native 100m pixel (raw range 0–10,000). The extractor divided it by 100, which yields a **percentage (0–100)** while the column name and this table both promised a 0–1 proportion — so `builtup_fraction_*` and `canopy_fraction_*`, a conceptually paired near-inverse, sat on scales **100x apart**. It now divides by the native pixel area, giving a true proportion. **Any figure quoting `builtup_fraction` from before this date is 100x too large** (the earlier "42.6% built-up" readings in this document were percentages, i.e. 0.426 as a proportion). The config also claimed a 10m native grid; it is 100m. `heat_exposure_index` is unaffected — it z-scores its components, and z-scores are scale-invariant. |
 
 **Data source:** JRC Global Human Settlement Layer (GHSL), Built-up Surface 2020, release P2023A.
 - GEE asset: `JRC/GHSL/P2023A/GHS_BUILT_S/2020`, band `built_surface`
@@ -337,7 +339,7 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 
 **Processing:**
 
-1. **Normalisation:** The GHSL `built_surface` band contains built-up surface percentage values (0–100). These are divided by 100 to produce a 0–1 fraction.
+1. **Normalisation:** The GHSL `built_surface` band contains SQUARE METRES of built surface per native 100m pixel. Dividing by the native pixel area (100² = 10,000 m²) gives the proportion of ground built, 0–1 — the same scale as `canopy_fraction_*`.
 
 2. **Buffering:** Two circular buffers (50m and 150m) are constructed around each business point, matching the canopy cover buffers.
 

@@ -25,8 +25,12 @@ def extract_builtup(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 
     ghsl = ee.Image(bu_cfg["dataset"]).select(bu_cfg["band"])
 
-    # GHSL built-up surface is a percentage (0-100); normalise to 0-1
-    ghsl_frac = ghsl.divide(100)
+    # The band is SQUARE METRES of built surface per native pixel, so the
+    # proportion of ground built is built_surface / native_pixel_area. Dividing
+    # by 100 (as this did until 2026-09-05) gives a percentage, not the 0-1
+    # proportion the column name promises and canopy_fraction_* deliver.
+    native = bu_cfg.get("native_scale_m", 100)
+    ghsl_frac = ghsl.divide(native ** 2)
 
     # One frame per radius, merged at the end. Each radius checkpoints under its
     # own name so an interrupted run resumes at the radius and batch it stopped

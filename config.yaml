@@ -140,11 +140,22 @@ nightlights:
 
 # ---------- Indicator 8: Built-up Surface Fraction ----------
 builtup:
-  # JRC GHSL Built-up Surface 2020, 10m resolution
+  # JRC GHSL Built-up Surface 2020.
   dataset: "JRC/GHSL/P2023A/GHS_BUILT_S/2020"
   band: "built_surface"
   buffer_radii_m: [50, 150]
-  scale_m: 10
+  # NATIVE GRID IS 100m, not the 10m this previously claimed. The band holds
+  # SQUARE METRES OF BUILT SURFACE PER PIXEL (raw range 0-10,000), so the
+  # proportion of ground built is built_surface / native_scale_m^2.
+  #
+  # CORRECTED 2026-09-05: the extractor divided by 100, which yields a
+  # PERCENTAGE (0-100) while the column name and data dictionary both said
+  # "fraction / proportion (0-1)". canopy_fraction_* are genuine 0-1
+  # proportions, so the two paired indicators sat on scales 100x apart. Values
+  # are now true proportions; anything quoting builtup_fraction before this date
+  # is 100x too large.
+  native_scale_m: 100
+  scale_m: 100
 
 # ---------- Indicator 11: Humid Heat Stress (ERA5-Land) ----------
 heatstress:
@@ -327,26 +338,64 @@ gee:
   batch_size: 50
 
 # ---------- Block-Level Pipeline ----------
+# Zonal statistics over the sampling-grid block polygons, for mapping these
+# indicators across a whole city. Run: cd python/blocks && python3 run_all_blocks.py
 blocks:
-  # Source GeoJSON files: one per country in the blockexplorer repo
+  # Source GeoJSON, one per country, read directly from the blockexplorer repo.
   source_dir: "../cfi-map2-blockexplorer2026/data"
-  # Local copy directory for block GeoJSONs
   input_dir: "data/input/blocks"
   output_dir: "data/output/blocks"
-  # Fixed analysis end date for time-series indicators (heat, rainfall, AOD, nightlights)
-  analysis_end_date: "2026-03-01"
-  # Country directory → city name mapping
+  block_id_field: "block_id"
+  # Blocks are simple rectangles (~150m, median 22,000 m2), so they batch larger
+  # than points.
+  batch_size: 100
   country_city_map:
     Brazil: "Sao Paulo"
     Ethiopia: "Addis Ababa"
     India: "Delhi"
     Indonesia: "Jakarta"
     Nigeria: "Lagos"
-  # GeoJSON property names
-  block_id_field: "block_id"
-  # Batch size — blocks are simple rectangles so can handle larger batches
-  # than the point pipeline. Larger batches = fewer GEE API round-trips.
-  batch_size: 100
+  # Restrict to a subset of cities; null = all five. Matches gsmm.include_cities.
+  include_cities: ["Addis Ababa", "Jakarta", "Lagos"]
+  # Only blocks flagged in the sampling design. null/false = the whole grid,
+  # which is what a citywide map needs (51,417 blocks for the three cities
+  # against 300 with the flag set).
+  final_sample_only: false
+  #
+  # THE ANALYSIS WINDOW IS SHARED WITH THE POINT PIPELINE (time_window above).
+  # It used to be a separate blocks.analysis_end_date of 2026-03-01 against the
+  # point pipeline's 2026-07-31, which meant block maps and business-level
+  # values described DIFFERENT PERIODS and could not be read together.
+  #
+  # WHICH INDICATORS TO COMPUTE. Deliberately a subset of the 13 run at business
+  # level, chosen on native resolution and measured within-city variance,
+  # because a block map can only show what varies between blocks. At ~150m
+  # blocks a 1km source gives one value per ~44 blocks and an 11km source one
+  # per ~5,400 — mapping those shows an upsampled raster, not spatial pattern.
+  #
+  #   kept, fine-grained : buildings 0.5m (98% within-city variance),
+  #                        canopy/builtup 10m (93%/47%), slope 30m (93%),
+  #                        hrsl 31m (86%), hand 90m (66%), nightlights 500m (82%)
+  #   kept, coarse but conceptually necessary:
+  #                        lst_max_c 1km (22%), no2_mean 1.1km (14%) — expect
+  #                        smooth surfaces, not block-level detail
+  #   dropped            : ERA5 heat stress 11km (0-5% within-city), CHIRPS
+  #                        rainfall 5.5km (4-13%), night LST (0-1%), most AOD
+  #                        (6-9%), elevation (0.4% — the between-city range
+  #                        swamps anything local; slope from the same DEM is 93%)
+  indicators: ["terrain", "heat", "flood", "canopy", "builtup",
+               "nightlights", "hrsl", "buildings", "no2"]
+  # Per-indicator batch overrides. Where request cost is dominated by the
+  # COLLECTION REDUCTION rather than the number of blocks, far fewer and much
+  # larger requests is strictly faster - the finding that took the point
+  # pipeline's AOD from ~21 hours to ~1.5. Measured on 120 blocks in 2 batches:
+  # no2 61s and heat 19s, against 2-4s for every raster-only indicator.
+  batch_size_overrides:
+    no2: 1000
+    heat: 500
+  getinfo_timeout_overrides:
+    no2: 600
+    heat: 600
 
 # ---------- GSMM Listing Ingestion ----------
 # Builds data/input/gsmm_listings.csv from the prepared coordinate file that

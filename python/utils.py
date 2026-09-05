@@ -24,7 +24,7 @@ GETINFO_RETRY_BACKOFF = 30  # seconds before first retry, doubling thereafter
 def load_config(config_path: str = None) -> dict:
     """Load configuration from config.yaml."""
     if config_path is None:
-        config_path = Path(__file__).parent.parent / "config.yaml"
+        config_path = Path(__file__).resolve().parent.parent / "config.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 
@@ -44,7 +44,7 @@ def load_business_points(config: dict) -> pd.DataFrame:
     Returns a DataFrame with columns: business_id, latitude, longitude,
     fieldwork_date (as datetime), city.
     """
-    input_path = Path(__file__).parent.parent / config["input_file"]
+    input_path = Path(__file__).resolve().parent.parent / config["input_file"]
     col_map = config["input_columns"]
     date_fmt = config.get("date_format", "%Y-%m-%d")
 
@@ -117,7 +117,7 @@ def fc_to_dataframe(features: list[dict]) -> pd.DataFrame:
 
 def save_output(df: pd.DataFrame, name: str, config: dict):
     """Save a DataFrame to the configured output directory."""
-    out_dir = Path(__file__).parent.parent / config["output_dir"]
+    out_dir = Path(__file__).resolve().parent.parent / config["output_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{name}.csv"
     df.to_csv(out_path, index=False)
@@ -173,7 +173,7 @@ def safe_getinfo(ee_object, timeout=GETINFO_TIMEOUT_SEC,
 
 def _checkpoint_path(indicator_name: str, config: dict) -> Path:
     """Return the path for an indicator's checkpoint CSV."""
-    out_dir = Path(__file__).parent.parent / config["output_dir"]
+    out_dir = Path(__file__).resolve().parent.parent / config["output_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / f".checkpoint_{indicator_name}.csv"
 
@@ -323,10 +323,16 @@ def _strip_perf_keys(obj):
     return obj
 
 
-def indicator_fingerprint(name: str, config: dict, df: pd.DataFrame) -> str:
-    """Stable hash of everything that affects this indicator's output values."""
+def indicator_fingerprint(name: str, config: dict, df: pd.DataFrame = None,
+                          keys: list[str] = None) -> str:
+    """Stable hash of everything that affects this indicator's output values.
+
+    `keys` overrides the config sections to hash, so the block pipeline can
+    reuse this with its own indicator names. `df` may be omitted when the
+    window is fixed (blocks have no fieldwork dates to anchor to).
+    """
     payload = {k: _strip_perf_keys(config.get(k))
-               for k in INDICATOR_CONFIG_KEYS.get(name, [name])}
+               for k in (keys or INDICATOR_CONFIG_KEYS.get(name, [name]))}
 
     if name in _USES_DEFAULT_SCALE:
         payload["_default_scale_m"] = config.get("gee", {}).get("default_scale_m")
@@ -336,7 +342,8 @@ def indicator_fingerprint(name: str, config: dict, df: pd.DataFrame) -> str:
     # every existing row for that city. Fold the per-city max dates in so that
     # shift is detected instead of silently mixing two windows in one file.
     tw = config.get("time_window", {}) or {}
-    if name in TIME_SERIES_INDICATORS and not tw.get("analysis_end_date"):
+    if (df is not None and name in TIME_SERIES_INDICATORS
+            and not tw.get("analysis_end_date")):
         payload["_city_max_dates"] = {
             str(city): str(pd.Timestamp(g["fieldwork_date"].max()).date())
             for city, g in df.groupby("city")
@@ -347,7 +354,7 @@ def indicator_fingerprint(name: str, config: dict, df: pd.DataFrame) -> str:
 
 
 def _manifest_path(config: dict) -> Path:
-    out_dir = Path(__file__).parent.parent / config["output_dir"]
+    out_dir = Path(__file__).resolve().parent.parent / config["output_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir / "extraction_manifest.json"
 

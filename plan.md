@@ -335,6 +335,8 @@ The block pipeline reuses the same remote sensing datasets but differs in three 
 
 ---
 
+> **Superseded 2026-09-05.** The eight `extract_*_blocks.py` modules described below were replaced by `block_indicators.py` + a rewritten `run_all_blocks.py`, which reuse the point pipeline's image builders. See `data/output/blocks/block_data_dictionary.md` for the current block schema.
+
 ## File Structure
 
 ```
