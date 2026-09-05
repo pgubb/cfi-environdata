@@ -14,7 +14,8 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 
 | Column | Type | Units | Description |
 |---|---|---|---|
-| `block_id` | string | | Block identifier, prefixed with the city (`Lagos_1234`) — raw grid ids are numeric and collide across cities. |
+| `block_id` | string | | **RAW grid id**, matching `final_sampling_grid_2026.geojson` and `enum_data`'s `BlockID`. **Not unique on its own** — ids restart at 1 in every city. |
+| `block_uid` | string | | City-prefixed id (`Lagos_1234`), unique across all cities. Convenience for single-key joins. |
 | `city` | string | | One of Addis Ababa, Jakarta, Lagos. |
 | `slope_degrees` | float | degrees | Mean terrain slope (SRTM 30 m). Landslide proxy and runoff term. |
 | `lst_max_c` | float | °C | Maximum daytime land surface temperature over the window (MODIS 1 km). |
@@ -43,6 +44,18 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `heat_exposure_index` | -0.0 (0.64) | 0.0 (0.73) | 0.0 (0.77) |
 
 `hand_m` is the clearest discriminator: highland Addis Ababa sits 30 m above drainage on average against 2.1 m in coastal Lagos, and it retains large *within*-city spread (Addis SD 27.5, range 0–276 m).
+
+> ### Merging back onto the sampling frame
+>
+> **Join on `city` + `block_id`.** Raw grid ids restart at 1 in every city, so a join on `block_id` alone fans rows out — the same trap as the business frame's `country` + `enterprise_id`. Use `block_uid` if a single-column key is needed.
+>
+> ```r
+> grid <- st_read("final_sampling_grid_2026.geojson")     # block_id is character
+> blocks <- read_csv("all_block_indicators.csv")
+> grid |> left_join(filter(blocks, city == "Lagos"), by = "block_id")
+> ```
+>
+> Verified against the source grid: Addis Ababa 15,842, Jakarta 26,293 and Lagos 9,282 blocks all merge one-to-one with no fan-out.
 
 ---
 

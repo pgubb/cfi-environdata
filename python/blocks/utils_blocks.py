@@ -75,9 +75,15 @@ def load_blocks(config: dict) -> gpd.GeoDataFrame:
         if blocks_cfg.get("final_sample_only") and "in_final_sample" in gdf:
             gdf = gdf[gdf["in_final_sample"].astype(bool)]
 
-        gdf[block_id_field] = city + "_" + gdf[block_id_field].astype(str)
+        # Keep the RAW grid id: it is what the source GeoJSON and the study's
+        # enum_data BlockID use, so it is the column any merge back onto the
+        # sampling frame needs. The prefixed id exists only because raw ids
+        # collide across cities (every city has a block "1"), and every internal
+        # merge here is on a single key.
+        gdf["block_id_raw"] = gdf[block_id_field].astype(str)
+        gdf[block_id_field] = city + "_" + gdf["block_id_raw"]
         gdf["city"] = city
-        frames.append(gdf[[block_id_field, "city", "geometry"]])
+        frames.append(gdf[[block_id_field, "block_id_raw", "city", "geometry"]])
         note = f" (of {n_all:,} in the grid)" if len(gdf) != n_all else ""
         print(f"  Loaded {len(gdf):,} blocks for {city}{note}")
 

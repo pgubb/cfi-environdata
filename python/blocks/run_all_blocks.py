@@ -169,7 +169,16 @@ def main():
         return
 
     print("\n=== Merging block indicators ===")
-    merged = blocks[[id_field, "city"]].rename(columns={id_field: "block_id"})
+    # Output BOTH ids. `block_id` is the RAW grid id so the file merges directly
+    # onto final_sampling_grid_2026.geojson and enum_data's BlockID; `block_uid`
+    # is the city-prefixed key that is unique on its own.
+    #
+    # MERGE ON city + block_id, NOT block_id alone: raw grid ids restart at 1 in
+    # every city, so a bare join fans rows out — the same trap as the business
+    # frame's country + enterprise_id.
+    merged = blocks[[id_field, "block_id_raw", "city"]].rename(
+        columns={id_field: "block_uid", "block_id_raw": "block_id"})
+    merged["block_uid"] = merged["block_uid"].astype(str)
     merged["block_id"] = merged["block_id"].astype(str)
     for name, df in results.items():
         if df.empty or "block_id" not in df.columns:
@@ -177,16 +186,21 @@ def main():
                 f"Indicator '{name}' produced no rows; cannot merge. Check the "
                 f"run log above for its failure.")
         df = df.copy()
-        df["block_id"] = df["block_id"].astype(str)
-        df = df.drop_duplicates(subset="block_id", keep="last")
+        # Per-indicator CSVs carry the prefixed id; join on that, then present
+        # the raw id to the caller.
+        df = df.rename(columns={"block_id": "block_uid"})
+        df["block_uid"] = df["block_uid"].astype(str)
+        df = df.drop_duplicates(subset="block_uid", keep="last")
         before = len(merged)
-        merged = merged.merge(df, on="block_id", how="left")
+        merged = merged.merge(df, on="block_uid", how="left")
         if len(merged) != before:
             raise RuntimeError(
                 f"Merging '{name}' changed the row count {before:,} -> "
                 f"{len(merged):,}; its block_id values are not unique.")
 
     merged = add_block_heat_index(merged, config)
+    lead = ["block_id", "block_uid", "city"]
+    merged = merged[lead + [c for c in merged.columns if c not in lead]]
     save_block_output(merged, "all_block_indicators", config)
     print(f"\nFinal block dataset: {merged.shape[0]:,} rows x "
           f"{merged.shape[1]} columns")
