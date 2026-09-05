@@ -1,6 +1,6 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 85 columns: 7 passthrough from the input, 70 GEE-derived, and 8 derived exceedance rates.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 86 columns: 7 passthrough from the input, 70 GEE-derived, 8 derived exceedance rates, and 1 composite index.
 
 **Last generated:** 2026-09-04 (13 indicators), 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
 
@@ -611,6 +611,60 @@ Night-time heat counts get the same treatment: `heat_nights_frac_gt20c` and `hea
 - **Not annualised.** `fraction x 365` would read as "expected days per year" but extrapolates the clear-sky exceedance rate onto cloudy days, which are systematically cooler and less polluted — overstating exposure most in the cloudiest cities, reintroducing the same bias less visibly.
 
 **Missing values.** A rate is `NaN` where the observation count is zero or missing, never 0: an unobserved point has an undefined rate, not a rate of zero. This affects the same 24 Lagos businesses whose MODIS pixel is permanently masked.
+
+---
+
+## Composite: `heat_exposure_index`
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `heat_exposure_index` | float | z-score | Within-city composite heat exposure. 0 is the city average; +1 is one standard deviation more exposed than other businesses **in the same city**. |
+
+Computed after the merge (`utils.add_heat_exposure_index`) as the mean of signed z-scores, each standardised **within city**:
+
+```
+mean( z(lst_mean_c) + z(lst_max_c) + z(builtup_fraction_150m) − z(canopy_fraction_150m) )
+```
+
+Components and signs are configurable under `derived.heat_exposure_index` in `config.yaml`.
+
+> ### Levels are NOT comparable across cities
+>
+> Every city has mean 0 by construction. `heat_exposure_index = 0.8` means the same thing in Lagos and Addis Ababa — "more exposed than most businesses in this city" — and says nothing about whether Lagos is hotter than Addis Ababa. **For between-city heat comparison use `wbgt_days_gt31c`** (Lagos 421 days, Jakarta 85, Addis Ababa 0), which integrates temperature and humidity and needs no composite.
+
+**Why within-city standardisation, and why only these four components.** A variance decomposition over the extracted data shows the heat variables split into two incompatible spatial scales:
+
+| Variable | Share of variance that is within-city |
+|---|---|
+| `canopy_fraction_150m` | 93% |
+| `builtup_fraction_150m` | 47% |
+| `lst_max_c` | 22% |
+| `lst_mean_c` | 8% |
+| `wbgt_days_gt31c` | **4%** |
+| `lst_night_mean_c`, `t2m_mean_c`, `rh_mean_pct` | **~1%** |
+| `heat_nights_frac_gt20c` | **0%** |
+
+The humid-heat and night-heat variables are effectively **city constants** — ERA5-Land is an ~11km grid and night LST is spatially smooth. Pooling them into one index would yield a city fixed effect in disguise, ranking cities rather than businesses. The four components are the heat variables with real within-city variance *and* a physical mechanism: surface heat load, the built surface that generates it, and the canopy that mitigates it.
+
+`building_height_mean_150m` was excluded despite having 98% within-city variance: it correlates ~0 with every thermal measure here (−0.10 with the index), so the data gives no support for including it.
+
+**Validation.**
+
+- Correlates with its components as intended: `lst_mean_c` +0.75, `lst_max_c` +0.72, `canopy_fraction_150m` −0.67, `builtup_fraction_150m` +0.55.
+- **Convergent validity:** correlates **+0.42** with within-city `lst_night_mean_c`, which is *not* a component — it tracks real thermal signal rather than only its own inputs.
+- Extremes are physically coherent. Comparing the most and least exposed decile within each city:
+
+| City | `lst_mean_c` (low → high decile) | Canopy | Built-up |
+|---|---|---|---|
+| Addis Ababa | 25.1 → 27.5 °C | 14.0% → 0.6% | 26% → 38% |
+| Jakarta | 33.6 → 35.6 °C | 22.9% → 0.3% | 33% → 48% |
+| Lagos | 28.8 → 33.1 °C | 6.6% → 0.0% | 39% → 67% |
+
+**Analytical notes:**
+
+- **NaN if ANY component is missing** (25 businesses, those with no MODIS LST), rather than averaging over whatever is present — an index from two components is not on the same scale as one from four, and silently mixing them would be worse than a gap.
+- **For regression, prefer the four components separately.** A composite imposes equal weights you have not estimated and discards information. Its value is descriptive: ranking, targeting, and communication ("the most heat-exposed quintile of businesses in each city").
+- Recomputed on every run from already-extracted columns, so it cannot go stale.
 
 ---
 

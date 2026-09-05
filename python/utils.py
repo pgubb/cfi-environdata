@@ -431,3 +431,53 @@ def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
             else:
                 out.insert(out.columns.get_loc(col) + 1, rate_col, values)
     return out
+
+
+def add_heat_exposure_index(merged: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Add `heat_exposure_index`: within-city composite heat exposure.
+
+    The mean of signed z-scores of the configured components, each standardised
+    WITHIN the grouping column (city by default).
+
+    Interpretation: 0 is the city average, +1 is one standard deviation more
+    exposed than other businesses IN THE SAME CITY. **Levels are NOT comparable
+    across cities** — every city has mean 0 by construction. For between-city
+    heat comparison use wbgt_days_gt31c, which integrates temperature and
+    humidity and needs no composite.
+
+    NaN if ANY component is missing, rather than averaging over whatever is
+    present: an index built from two components is not on the same scale as one
+    built from four, and silently mixing them would be worse than a gap.
+    """
+    cfg = (config.get("derived", {}) or {}).get("heat_exposure_index")
+    if not cfg:
+        return merged
+
+    components = cfg["components"]
+    group_col = cfg.get("standardise_within")
+
+    missing = [c for c in components if c not in merged.columns]
+    if missing:
+        print(f"  ! heat_exposure_index skipped; missing columns: {missing}")
+        return merged
+
+    out = merged.copy()
+    complete = out[list(components)].notna().all(axis=1)
+
+    z_frames = []
+    for col, sign in components.items():
+        values = out[col].where(complete)
+        if group_col:
+            grouped = values.groupby(out[group_col])
+            centred = values - grouped.transform("mean")
+            spread = grouped.transform("std")
+        else:
+            centred = values - values.mean()
+            spread = pd.Series(values.std(), index=values.index)
+        # A component with no variance in a group carries no information there;
+        # leave it out rather than dividing by zero.
+        z_frames.append(sign * (centred / spread.where(spread > 0)))
+
+    index = pd.concat(z_frames, axis=1).mean(axis=1)
+    out["heat_exposure_index"] = index.where(complete)
+    return out

@@ -218,6 +218,32 @@ buildings:
   # rather than a height diluted by open ground.
   height_presence_threshold: 0.5
 
+# ---------- Derived composite columns ----------
+# Computed after the merge from columns already extracted (pure client-side
+# arithmetic), so they need no cache of their own and are recomputed every run.
+derived:
+  heat_exposure_index:
+    # WITHIN-CITY heat exposure. Standardising within city is deliberate, not a
+    # convenience: a variance decomposition over the extracted data shows the
+    # humid-heat and night-heat variables are effectively CITY CONSTANTS
+    # (wbgt_days_gt31c 4% within-city variance, lst_night_mean_c ~1%,
+    # heat_nights_frac_gt20c 0%). Pooling those into one index would produce a
+    # city fixed effect in disguise that ranks cities rather than businesses.
+    # For BETWEEN-city hazard use wbgt_days_gt31c directly - it already
+    # integrates temperature and humidity and needs no composite.
+    #
+    # Components are the heat variables with real within-city variance AND a
+    # physical mechanism: surface heat load, the built surface generating it,
+    # and the canopy mitigating it. Sign is the direction of exposure.
+    components:
+      lst_mean_c: 1
+      lst_max_c: 1
+      builtup_fraction_150m: 1
+      canopy_fraction_150m: -1
+    # Column to standardise within. null would standardise over the pooled
+    # sample, which reintroduces the between-city dominance described above.
+    standardise_within: "city"
+
 # ---------- Time-series analysis window ----------
 # Heat, rainfall, air quality and nightlights each reduce an image collection
 # over a trailing window, then sample the result at each point.

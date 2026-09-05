@@ -245,6 +245,11 @@ ROWS = [
      "Derived: built area / building count | INDEX, not a measurement",
      "Typical building footprint within 150 metres. Together with building count this separates one large structure from many small ones, which builtup_fraction cannot: all three cities sit near 42% built-up, yet footprints run Addis Ababa 64 m2, Jakarta 83, Lagos 92 - a plausible signature of small-plot informal development in Addis Ababa. RELATIVE MEASURE ONLY: correlates with polygon ground truth at r=0.85 and preserves the city rank order exactly, but runs ~37% LOW in level (polygons give 91/125/151 m2 for the same buffers). Compare locations with it; do not quote the value as a measured footprint. Missing where the buffer contains no buildings - undefined, not zero."),
 
+    # ---- composite ----
+    ("heat_exposure_index", "Heat exposure index (within-city)", "env_heat", "continuous",
+     "Derived: mean of signed within-city z-scores | NOT comparable across cities",
+     "Composite within-city heat exposure: the mean of signed z-scores of lst_mean_c, lst_max_c, builtup_fraction_150m and minus canopy_fraction_150m, each standardised WITHIN city. Zero is the city average and +1 is one standard deviation more exposed than other businesses IN THE SAME CITY. LEVELS ARE NOT COMPARABLE ACROSS CITIES - every city has mean zero by construction, so 0.8 means the same thing in Lagos and Addis Ababa and says nothing about which city is hotter. For between-city heat use wbgt_days_gt31c, which integrates temperature and humidity. Standardising within city is deliberate: the humid-heat and night-heat variables have almost no within-city variance (wbgt_days_gt31c 4%, lst_night_mean_c 1%, heat_nights_frac_gt20c 0%), so pooling them would produce a city fixed effect in disguise. Validated by convergent validity - it correlates +0.42 with within-city night land surface temperature, which is not one of its components. FOR REGRESSION, prefer the four components separately: a composite imposes equal weights that were not estimated. Its value is descriptive - ranking, targeting, communication. Missing where any component is missing, rather than averaging over a partial set."),
+
     # ---- humid heat stress (ERA5-Land) ----
     ("t2m_mean_c", "Mean air temperature (C)", "env_heatstress", "continuous",
      "GEE: ECMWF/ERA5_LAND/DAILY_AGGR | ~11km, CITY-LEVEL",

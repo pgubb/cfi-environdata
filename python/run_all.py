@@ -16,7 +16,7 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points, save_output,
     indicator_fingerprint, load_manifest, save_manifest, clear_checkpoint,
-    add_exceedance_rates,
+    add_exceedance_rates, add_heat_exposure_index,
 )
 
 # Indicator name -> (banner, module, function). Order is the run order.
@@ -182,6 +182,7 @@ def main():
     # Derived columns, recomputed from the merged frame on every run (pure
     # client-side arithmetic, so they never need a cache of their own).
     merged = add_exceedance_rates(merged)
+    merged = add_heat_exposure_index(merged, config)
 
     save_output(merged, "all_indicators", config)
 
