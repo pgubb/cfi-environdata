@@ -203,6 +203,11 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 |---|---|---|---|
 | `rain_days_gt20mm` | integer | count of days | Number of days in the trailing 2-year window where daily precipitation exceeded 20mm (heavy rain). |
 | `rain_days_gt50mm` | integer | count of days | Number of days in the trailing 2-year window where daily precipitation exceeded 50mm (very heavy rain / potential flood trigger). |
+| `rain_days_dry` | integer | count of days | Days with rainfall BELOW `rainfall.dry_day_threshold_mm` (1.0mm, the WMO convention for "a day without meaningful rain"). **The recommended dry-day measure** — see below. |
+| `rain_frac_dry` | float | proportion (0–1) | `rain_days_dry / 730`, i.e. "57% of days were dry". |
+| `rain_days_zero` | integer | count of days | Days recorded as **exactly 0.0mm**. The literal reading of "no rainfall"; retained as a sensitivity check, but prefer `rain_days_dry`. |
+| `rain_frac_zero` | float | proportion (0–1) | `rain_days_zero / 730`. |
+| `rain_max_dry_spell` | integer | count of days | **Longest run of CONSECUTIVE dry days** (below the same 1.0mm threshold). A different hazard from the dry-day total — see below. |
 | `rain_total_mm` | float | mm | Total accumulated precipitation over the trailing 2-year window. |
 | `rain_max_day_mm` | float | mm | Maximum single-day precipitation recorded in the trailing 2-year window. |
 | `rain_mean_daily_mm` | float | mm/day | Mean daily precipitation over the trailing 2-year window. |
@@ -237,6 +242,34 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 - **CHIRPS methodology:** CHIRPS blends satellite cold-cloud-duration estimates with weather station data. It is well-validated for tropical regions and is the standard precipitation dataset for climate hazard monitoring in the Global South.
 - **Temporal window:** Fixed at exactly 730 days per city rather than per-business. Businesses in the same city share the same rainfall values, so this indicator varies almost entirely *between* cities.
 - **`rain_valid_obs` is 730 for every row.** CHIRPS is gap-filled and not cloud-masked, so unlike heat and AOD there is no coverage bias: **`rain_days_gt20mm` and `rain_days_gt50mm` ARE directly comparable across cities.** This is the only day-count indicator for which that holds.
+
+### Dry days: the threshold changes the answer
+
+`rain_days_zero` counts days CHIRPS records as exactly 0.0mm; `rain_days_dry` counts days below 1.0mm. They disagree substantially and **reverse the city ranking**:
+
+| City | Exactly 0mm | Below 1mm |
+|---|---|---|
+| Addis Ababa | 91 (12%) | **412 (56%)** |
+| Jakarta | 127 (17%) | 249 (34%) |
+| Lagos | 233 (32%) | 433 (59%) |
+
+Addis Ababa has ~320 days sitting between 0 and 1mm — trace drizzle the exact-zero count discards, putting it last on zeros and near-first on the threshold. **Prefer `rain_days_dry`**: CHIRPS is an interpolated satellite/gauge blend, so an exact 0.0 is partly an artefact of interpolation rather than a meteorological statement, and 1mm is the WMO convention.
+
+### `rain_max_dry_spell` is a different hazard from the dry-day count
+
+The longest run of CONSECUTIVE dry days, computed by walking the time-ordered collection with `ee.ImageCollection.iterate`, keeping a streak that resets on any wet day (`max_dry_spell` in `extract_rainfall.py`).
+
+| City | Dry days | Max spell |
+|---|---|---|
+| Lagos | 433 | 58 |
+| Addis Ababa | 412 | **86** (max 133) |
+| Jakarta | 249 | 34 |
+
+**Lagos and Addis Ababa have almost identical dry-day counts but very different spells.** Lagos spreads its dry days across a bimodal rainfall regime; Addis Ababa concentrates them into one long dry season. For a business, 433 scattered dry days and an unbroken 86-day dry period are not the same exposure — and this is the column that speaks to the survey's `clim_event_drought` / `clim_damage_drought` items.
+
+> **Spells are truncated at the window edges.** A dry period already underway on 2024-07-31, or still running on 2026-07-31, is cut off, so the true maximum can be longer. Unavoidable with a fixed window.
+
+Unlike every other rainfall column this one carries real within-city variation (Addis Ababa SD 23.7 days, range 58–133) despite CHIRPS's 5.5km grid.
 - **Observed in the 2026-08-26 run** (2-year totals, annualised in brackets): Jakarta 5,525 mm (2,762/yr), Lagos 3,686 mm (1,843/yr), Addis Ababa 2,304 mm (1,152/yr).
 
 ---
@@ -609,7 +642,7 @@ Night-time heat counts get the same treatment: `heat_nights_frac_gt20c` and `hea
 **Deliberately absent:**
 
 - **No WBGT or NO2 rates.** ERA5-Land is a reanalysis with no cloud gaps — every day of the window is present — so `wbgt_days_gt*` are already comparable. The NO2 columns are means rather than day-counts.
-- **No rainfall rates.** CHIRPS is gap-filled rather than cloud-masked, so `rain_valid_obs` is exactly 730 for every row; a fraction would be a constant rescaling carrying no information, and `rain_days_gt*` are already directly comparable.
+- **No fractions for `rain_days_gt*`.** CHIRPS is gap-filled, so `rain_valid_obs` is exactly 730 everywhere and those counts are already comparable. The DRY-day columns do get fractions — the rescale is equally exact, but "57% of days were dry" is the natural reading for a dry-day measure, where "2% of days exceeded 20mm" is not.
 - **Not annualised.** `fraction x 365` would read as "expected days per year" but extrapolates the clear-sky exceedance rate onto cloudy days, which are systematically cooler and less polluted — overstating exposure most in the cloudiest cities, reintroducing the same bias less visibly.
 
 **Missing values.** A rate is `NaN` where the observation count is zero or missing, never 0: an unobserved point has an undefined rate, not a rate of zero. This affects the same 24 Lagos businesses whose MODIS pixel is permanently masked.

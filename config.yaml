@@ -95,6 +95,32 @@ rainfall:
   trailing_years: 2
   # Daily precipitation thresholds (mm) for day-count indicators
   thresholds_mm: [20, 50]
+  # DRY-DAY threshold (mm). A day counts as dry when precipitation is BELOW
+  # this. 1.0 is the WMO convention for "a day without meaningful rain" and is
+  # the defensible default: CHIRPS is an interpolated satellite/gauge blend, so
+  # an exact 0.0 is partly an artefact of the interpolation rather than a
+  # meteorological statement. The difference is not cosmetic — measured over the
+  # 730-day window it REVERSES the city ranking:
+  #   exactly 0mm : Lagos 253, Jakarta 122, Addis Ababa 56
+  #   below 1mm   : Lagos 437, Addis Ababa 415, Jakarta 243
+  # Addis Ababa has 359 days sitting between 0 and 1mm — trace drizzle that the
+  # exact-zero count discards. Both measures are extracted; prefer the
+  # threshold-based one and see the data dictionary.
+  dry_day_threshold_mm: 1.0
+  # Longest run of consecutive dry days. Set false to skip.
+  #
+  # This flag also EXISTS TO BE PART OF THE FINGERPRINT. Cache validity is keyed
+  # on config, not on code, so adding a band in the extractor alone does not
+  # invalidate anything and the new column silently never appears (it did not,
+  # the first time this was added). Any new output column needs a config key
+  # like this one, or an explicit --force.
+  compute_dry_spell: true
+  # rain_max_dry_spell walks all 730 images with ee.ImageCollection.iterate, so
+  # a request costs ~5x what the simple counts do while remaining independent of
+  # the point count - the same profile as airquality and no2. Measured: 21s for
+  # a request regardless of size. Batch large.
+  batch_size: 1000
+  getinfo_timeout_sec: 600
   # CHIRPS native resolution ~5.5km
   scale_m: 5566
 

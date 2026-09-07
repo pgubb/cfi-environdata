@@ -401,6 +401,12 @@ RATE_DENOMINATORS = {
     "heat_days_gt":   ("lst_valid_obs", "heat_frac_gt"),
     "heat_nights_gt": ("lst_night_valid_obs", "heat_nights_frac_gt"),
     "aod_days_gt":    ("aod_valid_obs", "aod_frac_gt"),
+    # Dry days DO get fractions, unlike the heavy-rain counts. rain_valid_obs is
+    # a constant 730, so the fraction is an exact rescale rather than a
+    # correction for uneven coverage — but "57% of days were dry" is the natural
+    # way to read a dry-day measure, where "2% of days exceeded 20mm" is not.
+    "rain_days_dry":  ("rain_valid_obs", "rain_frac_dry"),
+    "rain_days_zero": ("rain_valid_obs", "rain_frac_zero"),
 }
 # wbgt_days_gt* and the NO2 summaries are deliberately absent: ERA5-Land is a
 # reanalysis with no cloud gaps (every day present), and the NO2 columns are
