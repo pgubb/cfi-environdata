@@ -31,6 +31,7 @@ Thumbs.db
 # does NOT match one directory deeper, so block outputs were being staged.
 data/output/*.csv
 data/output/blocks/*.csv
+data/output/blocks/long_*.csv
 
 # Real business coordinates (never commit — exact locations are sensitive).
 # data/input/ is otherwise tracked, so the GSMM ingest output is named here.

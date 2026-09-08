@@ -423,6 +423,53 @@ blocks:
     no2: 600
     heat: 600
 
+# ---------- Block-Level LONGITUDINAL Pipeline ----------
+# The static block table answers "where"; this one answers "when". Same blocks,
+# same two-year window, but each indicator computed over successive fixed-length
+# periods, so seasonal variation is visible.
+#
+# Run: cd python/blocks && python3 extract_longitudinal.py
+blocks_longitudinal:
+  period_days: 45
+  output_file: "all_block_indicators_longitudinal.csv"
+  # Cap on the zonal-reduction scale. reduceRegions evaluates at the requested
+  # scale, so a scale coarser than the ~149m block returns NULL for every block
+  # (no pixel centre falls inside). CHIRPS at 5,566m and ERA5-Land at 11,132m
+  # both produced entirely empty columns before this cap.
+  max_reduce_scale_m: 100
+  # ONLY TIME-VARYING INDICATORS. slope, hand, canopy (WorldCover 2021),
+  # builtup (GHSL 2020), hrsl and buildings (2023) are single-epoch rasters:
+  # computing them per period would emit 16 identical values per block, which is
+  # waste that also LOOKS like data. They stay in the static block table.
+  #
+  # Three of these were dropped from the static block set for low SPATIAL
+  # variation and return here precisely because their TEMPORAL variation is
+  # large: rainfall (4-13% within-city, but wet/dry seasonality dominates),
+  # ERA5 heat stress (0-5% spatially, strongly seasonal) and AOD (measured on a
+  # 16-period stack over Lagos blocks: 0.29 to 0.85, a 3x swing peaking in the
+  # Harmattan dust season).
+  indicators: ["heat", "rainfall", "airquality", "nightlights", "heatstress", "no2"]
+  # Cost is per REQUEST and largely independent of block count, so batch large —
+  # the same profile as the static pipeline's no2 and heat.
+  # Every indicator here batches large: cost is per REQUEST (dominated by the
+  # 16-period collection reductions) and near-independent of block count.
+  # Measured per request on 45 blocks: aod 28s, heatstress 15s, no2 13s,
+  # heat 5s, rainfall 4s, nightlights 4s.
+  batch_size_overrides:
+    heat: 500
+    rainfall: 500
+    airquality: 500
+    nightlights: 500
+    heatstress: 500
+    no2: 500
+  getinfo_timeout_overrides:
+    heat: 600
+    rainfall: 600
+    airquality: 600
+    nightlights: 600
+    heatstress: 600
+    no2: 600
+
 # ---------- GSMM Listing Ingestion ----------
 # Builds data/input/gsmm_listings.csv from the prepared coordinate file that
 # cfi-map2r2-data produces. Run `python3 prepare_gsmm_input.py` before run_all.py.

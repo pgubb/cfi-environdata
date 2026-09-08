@@ -82,6 +82,11 @@ def build_heatstress_image(config: dict, start_date: str, end_date: str):
     # Fill masked cells from neighbouring land cells; at this resolution the
     # nearest land value is the best available estimate, and the field varies
     # slowly enough that it is a reasonable one.
+    #
+    # units="pixels" is only safe because this indicator reduces at ERA5's
+    # NATIVE scale (heatstress.scale_m), making the reach ~33km. Reduce it
+    # finer and the fill silently shrinks with the scale — that is exactly what
+    # broke the block pipeline's copy, which now specifies the radius in metres.
     filled = stacked.focal_mean(radius=3, kernelType="square",
                                 units="pixels", iterations=3)
     return stacked.unmask(filled), names

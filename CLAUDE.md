@@ -44,6 +44,8 @@ python/
     block_indicators.py      # Specs reusing the POINT pipeline's image builders
     run_all_blocks.py        # Orchestrator: 9 indicators + merge
     make_block_registry.py   # Generates registry_environment_blocks.R
+    longitudinal_indicators.py # Per-period band builders (time-varying only)
+    extract_longitudinal.py  # 45-day periodic block series -> long format
 data/
   input/                     # Business coordinate CSVs
   input/blocks/              # Sampling frame GeoJSON files (from blockexplorer repo)
@@ -106,6 +108,9 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 - **Density conversions must reduce at the source's native scale.** These datasets store a count per cell; `ee.Image.pixelArea()` reports area at the *requested* scale, so reducing finer than native inflates density (WorldPop at 30m vs 93m: 9.4x too high).
 - **Coordinates are sensitive**: `data/input/gsmm_listings.csv` holds exact business locations and is git-ignored. `data/input/` is otherwise tracked, so never remove that rule, and never copy the file into `cfi-map2r2-data`. Only the derived indicators are safe to share back.
 - **Block pipeline**: zonal means over sampling-grid polygons, for citywide maps. `block_indicators.py` **calls the point pipeline's image builders** (`_build_heat_image`, `build_no2_image`, `build_buildings_image`, `build_density_image`) rather than reimplementing them — the eight `extract_*_blocks.py` modules it replaced had drifted to a different window and indicator set. Both pipelines share `time_window.analysis_end_date`. Block IDs are prefixed with the city name.
+- **Two block tables**: `all_block_indicators.csv` answers *where* (static, 9 indicators); `all_block_indicators_longitudinal.csv` answers *when* (6 time-varying indicators over 16 x 45-day periods, 822,672 rows). Rainfall, ERA5 heat stress and AOD are dropped from the static table for low spatial variation and included in the longitudinal one for high temporal variation.
+- **`reduceRegions` returns NULL when the reduction scale exceeds the polygon.** Blocks are ~149m, so CHIRPS (5,566m) and ERA5 (11,132m) yield entirely empty columns at native scale — the longitudinal pipeline caps the scale at 100m. Note this is the OPPOSITE hazard to `pixelArea`-derived densities, which inflate when reduced finer than native. Both fail silently; check coverage after adding any indicator.
+- **Pixel-denominated operations are coupled to the reduction scale.** `focal_mean(units="pixels")` and `ee.Image.pixelArea()` both change meaning with scale. The ERA5 coastal fill reprojects to the native grid first for exactly this reason.
 - **Block ids**: `all_block_indicators.csv` carries `block_id` (the RAW grid id, matching `final_sampling_grid_2026.geojson` and `enum_data`'s `BlockID`) and `block_uid` (city-prefixed). **Join on `city` + `block_id`** — raw ids restart at 1 in every city, so a bare join fans rows out.
 - **The block set is a deliberate SUBSET of the 13 point indicators**, chosen on native resolution and measured within-city variance: a block map can only show what varies between blocks, and an 11km source gives one value per ~5,400 blocks. ERA5 heat stress, CHIRPS rainfall, night LST and most AOD are dropped for that reason (0-13% within-city variance); `elevation_m` too, at 0.4%, though `slope_degrees` from the same DEM has 93%. See `data/output/blocks/block_data_dictionary.md`.
 

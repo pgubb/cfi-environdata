@@ -115,3 +115,83 @@ Per-indicator outputs are written as `<name>_blocks.csv` and merged into `all_bl
 Reuse of a cached per-indicator CSV is gated on a **config fingerprint** (`extraction_manifest.json` in the block output directory), so changing the analysis window or a dataset recomputes rather than silently reusing stale output. A `--only` run **never** rewrites `all_block_indicators.csv`, since a partial merge would drop every column it did not just compute.
 
 **Scope** is controlled by `blocks.include_cities` (currently the three complete cities) and `blocks.final_sample_only` (false — the flag marks only ~100 blocks per city).
+
+
+---
+
+# Companion table: `all_block_indicators_longitudinal.csv`
+
+The static table above answers **where**; this one answers **when**. Same blocks, same two-year window, but each indicator computed over successive **45-day periods**.
+
+**822,672 rows** = 51,417 blocks x 16 periods, long format, one row per block-period.
+
+| Column | Description |
+|---|---|
+| `block_id` | RAW grid id — **join on `city` + `block_id` + `period_index`** |
+| `block_uid` | City-prefixed unique block key |
+| `city` | Addis Ababa, Jakarta or Lagos |
+| `period_index` | 0–15 |
+| `period_start`, `period_end` | Period bounds (YYYY-MM-DD) |
+| `lst_max_c`, `lst_mean_c`, `lst_valid_obs` | Land surface temperature; clear-sky observation count |
+| `rain_total_mm`, `rain_days_dry`, `rain_max_day_mm` | Precipitation |
+| `aod_mean`, `aod_valid_obs` | Aerosol optical depth; valid retrievals |
+| `ntl_mean_radiance` | Nighttime lights |
+| `wbgt_mean_c`, `rh_mean_pct` | Humid heat stress; relative humidity |
+| `no2_mean` | Tropospheric NO2 |
+
+**Periods:** 16 of 45 days, 2024-07-31 to 2026-07-21. 730 / 45 = 16.2, so only **whole** periods are emitted; the 10-day remainder is dropped because a short final period would have sums and counts not comparable with the rest.
+
+## Which indicators, and why these
+
+**Only TIME-VARYING indicators.** Slope, HAND, canopy (WorldCover 2021), built-up (GHSL 2020), HRSL and buildings (2023) are single-epoch rasters — per-period values would be 16 identical copies, waste that also *looks* like data. They stay in the static table.
+
+**Three of the six were dropped from the static block map for low SPATIAL variation and return here on their TEMPORAL variation**: rainfall, ERA5 heat stress and AOD. That is the purpose of this table.
+
+## Seasonality — Lagos, by period
+
+| # | Starts | Rain (mm) | LST max (°C) | AOD | NO2 | WBGT (°C) |
+|---|---|---|---|---|---|---|
+| 0 | 2024-07-31 | 62 | 31.9 | 0.27 | 28 | 29.3 |
+| 1 | 2024-09-14 | 430 | 31.5 | 0.31 | 45 | 30.3 |
+| 2 | 2024-10-29 | 86 | 34.5 | 0.61 | 87 | 31.5 |
+| 3 | 2024-12-13 | 12 | 32.3 | 0.82 | 81 | 31.1 |
+| 4 | 2025-01-27 | 95 | 31.6 | 0.79 | 53 | 32.6 |
+| 5 | 2025-03-13 | 250 | 33.6 | 0.41 | 43 | 32.6 |
+| 6 | 2025-04-27 | 327 | 31.5 | 0.38 | 41 | 31.7 |
+| 7 | 2025-06-11 | 420 | 26.8 | 0.33 | 39 | 29.6 |
+| 8 | 2025-07-26 | 160 | 27.6 | 0.34 | 31 | 28.6 |
+| 9 | 2025-09-09 | 366 | 28.3 | 0.28 | 41 | 29.9 |
+| 10 | 2025-10-24 | 175 | 30.8 | 0.48 | 57 | 31.4 |
+| 11 | 2025-12-08 | 147 | 30.3 | 0.54 | 64 | 31.8 |
+| 12 | 2026-01-22 | 60 | 29.9 | 0.74 | 62 | 32.0 |
+| 13 | 2026-03-08 | 211 | 32.0 | 0.40 | 46 | 32.5 |
+| 14 | 2026-04-22 | 341 | 30.7 | 0.39 | 41 | 32.0 |
+| 15 | 2026-06-06 | 599 | 26.2 | 0.48 | 60 | 30.4 |
+
+Rainfall swings **12 to 599 mm** across periods, AOD **0.27 to 0.82** with peaks in the Harmattan dust season, NO2 **28 to 87**. Each varies far more over time than across blocks — the reason they were excluded from the static map and included here.
+
+## Caveats
+
+**Resolution relative to a block.** Only `lst_max_c` (1km) approaches block scale; rainfall is 5.5km (~37 blocks wide) and ERA5 heat stress 11km (~74 blocks). **Read this table along the TIME axis**; use the static table for spatial pattern. ERA5 is nonetheless *not* constant within a city — 61–249 distinct values per city-period, with up to 2.47°C spread across Addis Ababa, since its grid spans 2–3 cells and picks up elevation.
+
+**Reduction scale is capped at 100m** (`blocks_longitudinal.max_reduce_scale_m`). `reduceRegions` evaluates at the requested scale, so a scale coarser than the ~149m block returns NULL for every block: CHIRPS at 5,566m and ERA5 at 11,132m both produced entirely empty columns before this cap. Safe here because every metric is a mean or a per-pixel temporal statistic, never a `pixelArea`-derived density.
+
+**Missing values** (of 822,672 block-periods):
+
+| Column | Missing | Cause |
+|---|---|---|
+| `lst_max_c`, `lst_mean_c`, `lst_valid_obs` | 202,804 (25%) | **Seasonal cloud — and itself a signal.** Coverage falls to 46–57% in Dec–Mar and Oct–Jan, recovering to 84–99% otherwise; Addis Ababa 100%, Jakarta 65%, Lagos 62%. `lst_valid_obs` makes this measurable rather than hidden. |
+| `aod_mean`, `aod_valid_obs` | 51,271 (6%) | Cloud screening on MAIAC retrievals. |
+| `wbgt_mean_c`, `rh_mean_pct` | 23,568 (3%) | 1,473 Lagos blocks x 16 periods, all on Lagos Island / Victoria Island / the lagoon, which ERA5-Land masks as water. A focal fill from neighbouring land recovers Jakarta entirely and most of Lagos, but not blocks this deep inside the lagoon. Purely spatial: the same blocks in every period. |
+| `no2_mean` | 962 (0.1%) | Sparse Sentinel-5P retrievals in a few block-periods. |
+
+## Reproduction
+
+```bash
+cd python/blocks
+python3 extract_longitudinal.py                      # all six
+python3 extract_longitudinal.py --only rainfall,no2  # subset (skips the merge)
+python3 extract_longitudinal.py --force              # ignore caches
+```
+
+Each indicator is assembled into ONE multi-band image holding (metric x period) bands, so a single request per block batch returns every period. Total server-side work is about that of the static pipeline rather than 16x it, because summing 730 days costs roughly what summing 16 chunks of 45 days costs.
