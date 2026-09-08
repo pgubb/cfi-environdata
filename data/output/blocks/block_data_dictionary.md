@@ -195,3 +195,12 @@ python3 extract_longitudinal.py --force              # ignore caches
 ```
 
 Each indicator is assembled into ONE multi-band image holding (metric x period) bands, so a single request per block batch returns every period. Total server-side work is about that of the static pipeline rather than 16x it, because summing 730 days costs roughly what summing 16 chunks of 45 days costs.
+
+
+---
+
+## Registry
+
+`registry_environment_blocks_longitudinal.R` at the repo root holds drop-in registry rows for this table: **12 indicators across 5 `envlong_*` domains**, `frame = "Block-period"`, schema matching `R/registry.R`. Generated together with the static block registry by `python/blocks/make_block_registry.py`, which fails if any column is neither registered nor explicitly excluded.
+
+**This is a third unit of analysis.** `registry_environment.R` describes businesses, `registry_environment_blocks.R` describes blocks, and this describes block-periods. Never mix them in one estimate: a 150m buffer around a business, the block containing it, and that block during one 45-day window are three different regions of space-time, even where an indicator name is shared.
