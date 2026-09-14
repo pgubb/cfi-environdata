@@ -79,6 +79,17 @@ full — so a file can never end up holding rows computed under two different
 definitions. Performance-only keys (`batch_size`, `getinfo_timeout_sec`) are
 excluded from the fingerprint, so tuning them does not force a rerun.
 
+**The two pipelines keep SEPARATE manifests** — `data/output/extraction_manifest.json`
+for points, `data/output/blocks/extraction_manifest.json` for blocks — and the
+block pipeline must pass `block_config` (not `config`) to both `load_manifest`
+and `save_manifest`. It passed `config` to the save until 2026-09-14, so it read
+from `blocks/` but wrote to `data/output/`: block cache reuse never worked, and
+every block run silently destroyed the point pipeline's fingerprints, forcing a
+full 13-indicator recompute on the next `run_all.py`. Both failures were
+invisible in the logs — the block run just said "Cache invalid" every time. If
+either pipeline ever reports recomputing everything for no apparent reason,
+check which manifest each is reading and writing first.
+
 Within an indicator, each completed batch is checkpointed, so an interrupted run
 also resumes mid-way. Useful flags:
 

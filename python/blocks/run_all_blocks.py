@@ -157,7 +157,14 @@ def main():
         clear_checkpoint(f"{name}_blocks", config)   # only once safely on disk
         manifest[name] = {"fingerprint": fingerprints[name],
                           "rows": int(len(results[name]))}
-        save_manifest(manifest, config)
+        # block_config, NOT config: load_manifest above reads from
+        # blocks.output_dir, so saving against `config` wrote the block manifest
+        # into the POINT pipeline's data/output/extraction_manifest.json. That
+        # had two silent effects — block cache reuse never worked (it read a
+        # file nothing ever wrote), and every block run destroyed the point
+        # pipeline's fingerprints, forcing a full recompute of all 13 indicators
+        # on the next run_all.py. Fixed 2026-09-14.
+        save_manifest(manifest, block_config)
 
     if set(results) != set(config["blocks"]["indicators"]):
         # A partial --only run must not rewrite all_block_indicators.csv: doing
