@@ -1,8 +1,12 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 86 columns: 7 passthrough from the input, 70 GEE-derived, 8 derived exceedance rates, and 1 composite index.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 91 columns: 7 passthrough from the input, 75 GEE-derived, 8 derived exceedance rates, and 1 composite index.
 
-**Last generated:** 2026-09-04 (13 indicators), 11,468 businesses across Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095) — the three cities whose listing is complete. Delhi (7,357) and Sao Paulo (3,508) are present in the source file but excluded via `gsmm.include_cities` in `config.yaml` pending completion; set that key to `null` to extract all 22,333.
+**Last generated:** 2026-09-14 (13 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+
+**Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
+
+**Delhi was added 2026-09-10** from the final India export (`GSMM_Analysis_20260910_India.xlsx`), which raised India's listing from 7,357 to 7,805. The rebuild was verified to leave Addis Ababa, Jakarta and Lagos byte-identical, so their rows were reused from cache and only Delhi was extracted. Delhi changes several cross-city statements elsewhere in this document — most importantly it is the most polluted city on `aod_mean` (0.77) and the densest on `hrsl_density_150m` (66,336/km²), and its dry, clear climate gives it ~647 valid AOD days against Lagos's ~91, which is why **raw day-counts are more misleading than ever and the `*_frac_*` columns are mandatory for cross-city comparison**.
 
 **Input provenance changed 2026-09-04.** The pipeline now consumes `cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv` rather than reading the raw GSMM `.xlsx` exports itself. That repo owns every preparation and cleaning step — authoritative export selection, de-duplication, date parsing, decimal normalisation — so those rules live in one place instead of being reimplemented here. Validation of the switch: for the 10,989 businesses extracted under the old path, the prepared coordinates are byte-identical (max difference 0.00000000) with all listing dates matching.
 
@@ -34,7 +38,7 @@ Four indicators reduce an image collection over a trailing window and sample the
 
 Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier version widened the window to span all listing dates (`min(date) − 2yr → max(date)`), producing 755–761 days depending on the city's fieldwork spread — which inflated those counts and made them non-comparable across cities. All windows are now exactly **730 days** (2024-07-31 → 2026-07-31), or 365 for nightlights.
 
-`analysis_end_date` is set to 2026-07-31 because that is the last date with complete CHIRPS v3 coverage. Listing runs to 2026-08-15, so the final ~2 weeks are excluded deliberately: including them would leave rainfall with no data over a period the other indicators covered.
+`analysis_end_date` is set to 2026-07-31 because that is the last date with complete CHIRPS v3 coverage. **Listing now runs to 2026-09-08** (Sao Paulo; it was 2026-08-15 before Delhi and Brazil arrived), so the final ~5.5 weeks of fieldwork fall outside the window. That is deliberate and harmless — `fieldwork_date` is descriptive and defines no indicator's window, every city gets the same fixed 730 days, and extending the window would leave rainfall with no data over a period the other indicators covered. It does mean the gap between a business being listed and the period its indicators describe is now widest in Sao Paulo; if that gap ever matters for an analysis, use the longitudinal block table, which resolves time explicitly.
 
 ---
 
@@ -250,10 +254,12 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | City | Exactly 0mm | Below 1mm |
 |---|---|---|
 | Addis Ababa | 91 (12%) | **412 (56%)** |
+| Delhi | 381 (52%) | **571 (78%)** |
 | Jakarta | 127 (17%) | 249 (34%) |
 | Lagos | 233 (32%) | 433 (59%) |
+| Sao Paulo | 318 (44%) | 487 (67%) |
 
-Addis Ababa has ~320 days sitting between 0 and 1mm — trace drizzle the exact-zero count discards, putting it last on zeros and near-first on the threshold. **Prefer `rain_days_dry`**: CHIRPS is an interpolated satellite/gauge blend, so an exact 0.0 is partly an artefact of interpolation rather than a meteorological statement, and 1mm is the WMO convention.
+Delhi is the driest on both measures and the gap between them is narrower there (52% vs 78%), because its dry season is genuinely rainless rather than drizzly. Addis Ababa has ~320 days sitting between 0 and 1mm — trace drizzle the exact-zero count discards, putting it last on zeros and near-first on the threshold. **Prefer `rain_days_dry`**: CHIRPS is an interpolated satellite/gauge blend, so an exact 0.0 is partly an artefact of interpolation rather than a meteorological statement, and 1mm is the WMO convention.
 
 ### `rain_max_dry_spell` is a different hazard from the dry-day count
 
@@ -261,9 +267,13 @@ The longest run of CONSECUTIVE dry days, computed by walking the time-ordered co
 
 | City | Dry days | Max spell |
 |---|---|---|
+| Delhi | 571 | **91** (max 152) |
+| Sao Paulo | 487 | **30** (max 33) |
 | Lagos | 433 | 58 |
 | Addis Ababa | 412 | **86** (max 133) |
 | Jakarta | 249 | 34 |
+
+**Delhi is the extreme on both axes** — most dry days and the longest unbroken spell — the signature of a single concentrated monsoon. Note its within-city spread is negligible (SD 3.9 days against Addis Ababa's 23.7), so this column supports within-city analysis in Addis Ababa and essentially none in Delhi.
 
 **Lagos and Addis Ababa have almost identical dry-day counts but very different spells.** Lagos spreads its dry days across a bimodal rainfall regime; Addis Ababa concentrates them into one long dry season. For a business, 433 scattered dry days and an unbroken 86-day dry period are not the same exposure — and this is the column that speaks to the survey's `clim_event_drought` / `clim_damage_drought` items.
 
@@ -457,17 +467,19 @@ A **second, independent** population estimate alongside indicator 9. Read both t
 
 ### Choosing between the two population sources
 
-Full-sample means over all 10,989 businesses, 150m buffers (GHS-POP column is from a 300-point probe, not extracted):
+Full-sample means over all 24,497 businesses, 150m buffers (GHS-POP column is from a 300-point probe run on the original three-city frame, not extracted and not available for Delhi or Sao Paulo):
 
 | City | `hrsl_density_150m` | `pop_density_150m` (WorldPop) | GHS-POP 2025 (probe only) |
 |---|---|---|---|
-| Addis Ababa | 26,486 | 12,326 | ~21,100 |
-| Jakarta | 19,935 | 18,407 | ~21,900 |
-| Lagos | 12,876 | 14,391 | ~7,400 |
+| Addis Ababa | 26,443 | 12,314 | ~21,100 |
+| Delhi | 66,336 | 27,288 | — |
+| Jakarta | 20,005 | 18,506 | ~21,900 |
+| Lagos | 12,894 | 14,357 | ~7,400 |
+| Sao Paulo | 20,802 | 18,174 | — |
 
-**The two extracted sources rank neighbourhoods similarly but disagree sharply on level.** Within-city correlation between `hrsl_density_150m` and `pop_density_150m` is high — Addis Ababa **0.95**, Jakarta **0.82**, Lagos **0.73** — yet Addis Ababa's *level* differs by 2.1x (26,486 vs 12,326) and Lagos even reverses sign of the gap. Pooled across cities the correlation drops to **0.74**, because between-city level disagreement swamps the within-city agreement. Practically: either source supports *within-city* relative comparisons; neither should be trusted for absolute density or for cross-city level comparisons.
+**The two extracted sources rank neighbourhoods similarly but disagree sharply on level.** Within-city correlation between `hrsl_density_150m` and `pop_density_150m` is high — Addis Ababa **0.95**, Jakarta **0.82**, Delhi **0.78**, Lagos **0.73** — yet Addis Ababa's *level* differs by 2.1x (26,443 vs 12,314), Delhi's by 2.4x (66,336 vs 27,288), and Lagos even reverses sign of the gap. Pooled within city the correlation is **0.76**; pooled raw across cities it is **0.81**, a figure that looks reassuring only because Delhi's extreme level dominates the spread — on the three-city frame the same raw pooled figure was **0.74**. Treat neither as evidence the products agree. Practically: either source supports *within-city* relative comparisons; neither should be trusted for absolute density or for cross-city level comparisons.
 
-**These products disagree substantially, and the disagreement is not noise.** Addis Ababa spans a 3x range across the three estimates while Jakarta is comparatively tight — consistent with published findings that gridded population products diverge most where census infrastructure is weakest ([Uncovering large inconsistencies between ML-derived gridded settlement datasets](https://arxiv.org/pdf/2404.13127)).
+**These products disagree substantially, and the disagreement is not noise.** Addis Ababa spans a 3x range across the three estimates and Delhi a 2.4x range between the two extracted sources, while Jakarta is comparatively tight — consistent with published findings that gridded population products diverge most where census infrastructure is weakest ([Uncovering large inconsistencies between ML-derived gridded settlement datasets](https://arxiv.org/pdf/2404.13127)).
 
 Practical guidance:
 - **HRSL is the better default**: finest resolution, non-redundant buffer radii, independent of GHSL, and it sits between the other two products while correlating better with both than they do with each other.
@@ -496,11 +508,13 @@ Practical guidance:
 
 | City | `lst_mean_c` (surface) | `t2m_mean_c` (air) | `rh_mean_pct` | `wbgt_days_gt31c` |
 |---|---|---|---|---|
-| Addis Ababa | 26.4 | 15.2 | 64% | **0** |
-| Jakarta | 35.1 | 26.6 | 81% | 85 |
-| Lagos | 29.5 | 27.1 | 83% | **421** |
+| Addis Ababa | 26.3 | 15.2 | 64% | **0** |
+| Delhi | 28.4 | 24.3 | 64% | **223** |
+| Jakarta | 34.7 | 26.6 | 81% | 85 |
+| Lagos | 30.7 | 27.1 | 83% | **421** |
+| Sao Paulo | 26.3 | 19.5 | 80% | **0** |
 
-**Lagos has the LOWER surface temperature of the two coastal cities yet 5x Jakarta's heat-stress days**, because humidity at 83% removes the body's ability to cool by evaporation. Addis Ababa, tropical but dry highland at 15°C mean air temperature, records zero. Any analysis of the survey's `clim_heat_*` items should prefer these columns to the LST day-counts.
+**Lagos has the LOWER surface temperature of the two coastal cities yet 5x Jakarta's heat-stress days**, because humidity at 83% removes the body's ability to cool by evaporation. Addis Ababa, tropical but dry highland at 15°C mean air temperature, records zero. **Delhi shows that humidity is not the whole story either**: at the same 64% annual mean humidity as Addis Ababa it records 223 days, because its air temperature is 9°C higher and its humidity is concentrated in the monsoon months when temperatures are also high — an annual mean humidity hides that pairing. Any analysis of the survey's `clim_heat_*` items should prefer these columns to the LST day-counts.
 
 **Processing.** Daily sWBGT uses the Australian BoM approximation `0.567*Ta + 0.393*e + 3.94`, with vapour pressure `e` from dewpoint via the Magnus formula. It pairs each day's MEAN temperature with that day's MEAN vapour pressure — pairing the two daily maxima would assume temperature and humidity peak together, which they generally do not, and would overstate stress.
 
@@ -528,11 +542,13 @@ Practical guidance:
 
 | City | `aod_mean` (particulates) | `no2_mean` (combustion) |
 |---|---|---|
-| Lagos | **0.648** (worst) | 65.3 |
-| Jakarta | 0.480 | **127.3** (worst) |
+| Delhi | **0.774** (worst) | 118.5 |
+| Lagos | 0.648 | 65.3 |
+| Jakarta | 0.480 | 127.3 |
 | Addis Ababa | 0.306 | 41.7 |
+| Sao Paulo | **0.211** (cleanest) | **162.6** (worst) |
 
-Lagos leads on total aerosol; Jakarta leads on combustion gases by roughly 2x. Reporting either alone would give a different answer to "which city has the worst air".
+**Sao Paulo settles the argument for keeping both.** It is the cleanest city of the five on particulates and the worst on combustion gases — a complete reversal within one city. Across the full sample the two measures are essentially independent (raw pooled r = **−0.10**), so "which city has the worst air" has no single answer: it depends entirely on which pollutant is meant. Reporting either alone would be misleading.
 
 **Analytical notes:**
 
@@ -553,19 +569,21 @@ Lagos leads on total aerosol; Jakarta leads on combustion gases by roughly 2x. R
 
 **Data source:** Google Open Buildings 2.5D Temporal v1 (`GOOGLE/Research/open-buildings-temporal/v1`), year **2023**, bands `building_fractional_count`, `building_height`, `building_presence`. Native resolution **0.5m** — the finest data in this pipeline by a wide margin.
 
-**Why this exists alongside `builtup_fraction`.** GHSL measures the SHARE OF GROUND covered by built surface and cannot distinguish one large warehouse from forty small kiosks at the same coverage. All three cities sit near 42% built-up, yet they differ sharply once structures are counted:
+**Why this exists alongside `builtup_fraction`.** GHSL measures the SHARE OF GROUND covered by built surface and cannot distinguish one large warehouse from forty small kiosks at the same coverage. The five cities span 31–57% built-up, yet they differ sharply once structures are counted:
 
 | City | `building_count_150m` | `building_height_mean_150m` | `building_mean_area_150m` |
 |---|---|---|---|
 | Addis Ababa | 394 | 7.5 m | 64 m² |
+| Delhi | 395 | 9.6 m | 76 m² |
 | Jakarta | 454 | 7.1 m | 83 m² |
 | Lagos | 347 | 6.4 m | 92 m² |
+| Sao Paulo | 399 | **12.7 m** | 78 m² |
 
-Addis Ababa has the most buildings and the smallest footprints — dense small-plot development — while Lagos has the fewest and largest. That axis is invisible in `builtup_fraction`.
+Addis Ababa and Delhi have the smallest footprints — dense small-plot development — while Lagos has the fewest buildings and the largest. Delhi is the outlier on the vertical axis at 9.6 m, well above the other three. That axis is invisible in `builtup_fraction`.
 
 > ### These are indices, not censuses — validated, and biased in level
 >
-> Validated against Open Buildings **v3 polygons** (a different product: actual building outlines with measured areas) counted inside the identical 150m buffers, 36 businesses across all three cities:
+> Validated against Open Buildings **v3 polygons** (a different product: actual building outlines with measured areas) counted inside the identical 150m buffers, 36 businesses across the three cities in the frame at the time of validation (Addis Ababa, Jakarta, Lagos — Delhi has not been re-validated):
 >
 > | Metric | Correlation with polygons | Median ratio raster/polygon |
 > |---|---|---|
@@ -623,10 +641,12 @@ Computed after the merge in `run_all.py` (`utils.add_exceedance_rates`) as pure 
 | City | `lst_valid_obs` | `aod_valid_obs` |
 |---|---|---|
 | Addis Ababa | 404 | 347 |
+| Delhi | 334 | **647** |
+| Sao Paulo | 235 | 357 |
 | Jakarta | 86 | 202 |
 | Lagos | 40 | 91 |
 
-A 10x range for MODIS LST. Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis Ababa's `0` means "0 of ~404".
+A 10x range for MODIS LST and a **7x range for AOD** — Delhi's dry, clear skies return more than seven times Lagos's valid AOD retrievals, so its raw `aod_days_gt*` counts dwarf every other city's for reasons that have nothing to do with air quality. Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis Ababa's `0` means "0 of ~404".
 
 **This reverses conclusions, it does not merely adjust them.** Ranking the cities by air-pollution exceedance:
 
@@ -685,15 +705,27 @@ The humid-heat and night-heat variables are effectively **city constants** — E
 
 **Validation.**
 
-- Correlates with its components as intended: `lst_mean_c` +0.75, `lst_max_c` +0.72, `canopy_fraction_150m` −0.67, `builtup_fraction_150m` +0.55.
-- **Convergent validity:** correlates **+0.42** with within-city `lst_night_mean_c`, which is *not* a component — it tracks real thermal signal rather than only its own inputs.
+- Correlates with its components as intended: `lst_mean_c` +0.74, `lst_max_c` +0.73, `canopy_fraction_150m` −0.72, `builtup_fraction_150m` +0.58.
+- **Convergent validity is NOT uniform, and fails in Sao Paulo.** Against `lst_night_mean_c` — deliberately *not* a component — the pooled within-city figure is **+0.28**, down from +0.40 on the four-city frame. By city:
+
+| City | r with `lst_night_mean_c` |
+|---|---|
+| Addis Ababa | +0.62 |
+| Lagos | +0.51 |
+| Delhi | +0.38 |
+| Jakarta | +0.17 |
+| **Sao Paulo** | **−0.25** |
+
+  Sao Paulo is the only negative. Its most heat-exposed decile is slightly *cooler* at night (18.0 °C) than its least exposed (18.5 °C), even though the index's own components behave normally there (daytime LST 25.2 → 27.5 °C, canopy 17.1% → 0.9%). **The cause is not established** — elevation differs by only 9 m between those deciles, so terrain does not explain it. Treat the index as validated in Addis Ababa, Lagos and Delhi, weakly supported in Jakarta, and **not validated in Sao Paulo**, where the four components should be used separately.
 - Extremes are physically coherent. Comparing the most and least exposed decile within each city:
 
 | City | `lst_mean_c` (low → high decile) | Canopy | Built-up |
 |---|---|---|---|
 | Addis Ababa | 25.1 → 27.5 °C | 14.0% → 0.6% | 26% → 38% |
+| Delhi | 27.6 → 29.6 °C | 24.7% → 0.5% | 34% → 55% |
 | Jakarta | 33.6 → 35.6 °C | 22.9% → 0.3% | 33% → 48% |
 | Lagos | 28.8 → 33.1 °C | 6.6% → 0.0% | 39% → 67% |
+| Sao Paulo | 25.2 → 27.5 °C | 17.1% → 0.9% | 36% → 48% |
 
 **Analytical notes:**
 
@@ -745,15 +777,19 @@ python3 prepare_gsmm_input.py    # GSMM exports -> data/input/gsmm_listings.csv
 python3 run_all.py               # 8 indicators -> data/output/all_indicators.csv
 ```
 
-**Input.** `prepare_gsmm_input.py` reads the `Business Data` sheet of the latest GSMM export per country from `../cfi-map2r2-data/data/gsmm/`. File choice is by **kind first, then date** — a country team's cleaned `GSMM_Analysis_*` beats the vendor's daily `GSMM_Report_*` even when the Report is newer (ported from `gsmm_snapshot_path()` in that repo's `R/prep_cto.R`; newest-overall would silently swap the study's listing back to the uncleaned vendor file). Rows are de-duplicated on `Enterprise ID`, keeping the first.
+**Input.** Since 2026-09-04 `prepare_gsmm_input.py` no longer reads the raw `.xlsx` exports. It consumes `../cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv`, and **that repo owns every preparation step** — choosing the authoritative export per country (a country team's cleaned `GSMM_Analysis_*` beats the vendor's daily `GSMM_Report_*` even when the Report is newer), de-duplicating on `Enterprise ID`, parsing dates, normalising comma decimals, and recovering missing coordinates from the CTO interview extract. Those rules live in one repo so they cannot drift. This script's only substantive job is the key: the source `business_id` is the bare Enterprise ID, unique only *within* a country, so it is rewritten as `<Country>_<Enterprise ID>` with the raw id kept as `enterprise_id`.
 
-Sources used for the 2026-08-26 run:
+Sources behind the 2026-09-14 run (as selected by `cfi-map2r2-data`):
 
 | City | Source file | Listed | Usable |
 |---|---|---|---|
-| Addis Ababa | `GSMM_Report_20260818_034733_Ethiopia.xlsx` | 4,263 | 4,262 (−1 dup id) |
-| Jakarta | `GSMM_Report_20260818_034736_Indonesia.xlsx` | 3,714 | 3,714 |
-| Lagos | `GSMM_Report_20260824_034726_Nigeria.xlsx` | 3,015 | 3,013 (−2 dup id) |
+| Addis Ababa | `GSMM_Analysis_20260904_Ethiopia.xlsx` | 4,308 | 4,301 (−7 no coordinate anywhere) |
+| Delhi | `GSMM_Analysis_20260910_India.xlsx` | 7,805 | 7,805 |
+| Jakarta | `[INDONESIA] GSMM_Report_20260821_041304.xlsx` | 4,072 | 4,072 |
+| Lagos | `GSMM_Report_20260824_034726_Nigeria.xlsx` | 3,095 | 3,095 |
+| Sao Paulo | `GSMM_Analysis_20260911_Brazil.xlsx` | 5,224 | 5,224 |
+
+The 7 excluded Addis Ababa rows are rostered lost listings that were never interviewed, so no coordinate exists for them in any source; they are dropped rather than written with a blank, which the extraction side would otherwise sample as (0, 0).
 
 **Incremental reruns.** `run_all.py` extracts only businesses missing from each indicator's output CSV and reuses the rest, so adding a city or a newer GSMM extract costs only the new rows. Within an indicator, every completed batch is appended to `data/output/.checkpoint_<indicator>.csv` and deleted on success, so an interrupted run also resumes rather than restarting. Buffer indicators checkpoint per radius (`canopy_50m`, `builtup_150m`, …). `--force` ignores all caches; `--only heat,rainfall` runs a subset and skips the merge.
 
