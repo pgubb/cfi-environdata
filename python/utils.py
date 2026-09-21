@@ -299,6 +299,7 @@ INDICATOR_CONFIG_KEYS = {
     "heatstress":  ["heatstress", "time_window"],
     "no2":         ["no2", "time_window"],
     "buildings":   ["buildings"],
+    "pop2026":     ["pop2026"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.

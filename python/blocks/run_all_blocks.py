@@ -29,12 +29,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from utils import load_config, init_gee                          # noqa: E402
 from utils import indicator_fingerprint, load_manifest, save_manifest  # noqa: E402
+from worldpop2026 import density_for_blocks  # noqa: E402
+
+# Blocks per checkpointed chunk for local-raster indicators. No GEE request
+# to size, so this only bounds how much an interrupted run redoes.
+LOCAL_RASTER_CHUNK = 5000
 from utils_blocks import (                                       # noqa: E402
     load_blocks, batch_blocks, save_block_output, safe_getinfo,
     load_checkpoint, append_checkpoint, clear_checkpoint,
 )
 from block_indicators import (                                   # noqa: E402
-    BLOCK_INDICATORS, BLOCK_CONFIG_KEYS, block_scale,
+    BLOCK_INDICATORS, BLOCK_CONFIG_KEYS, block_scale, LOCAL_RASTER_INDICATORS,
 )
 
 
@@ -45,8 +50,50 @@ def _block_features(batch, block_id_field):
         for _, row in batch.iterrows()])
 
 
+def extract_local_raster(name, blocks_gdf, config, force=False):
+    """Zonal-mean a LOCAL-raster indicator over every block.
+
+    Same checkpoint contract as extract_indicator so main() cannot tell them
+    apart, but the values come from rasterio over a downloaded GeoTIFF rather
+    than from reduceRegions. Chunks are per city, since each city opens one
+    national raster and reads only the window its blocks cover.
+    """
+    _, columns = BLOCK_INDICATORS[name]
+    block_id_field = config["blocks"]["block_id_field"]
+    checkpoint_name = f"{name}_blocks"
+
+    if force:
+        clear_checkpoint(checkpoint_name, config)
+    done = load_checkpoint(checkpoint_name, config)
+    remaining = blocks_gdf
+    if done is not None and not done.empty:
+        remaining = blocks_gdf[~blocks_gdf[block_id_field]
+                               .astype(str).isin(set(done["block_id"].astype(str)))]
+        print(f"  resuming: {len(remaining):,} of {len(blocks_gdf):,} blocks left")
+
+    processed, total = 0, len(remaining)
+    for city, city_blocks in remaining.groupby("city"):
+        print(f"  {city}: {len(city_blocks):,} blocks", flush=True)
+        for start in range(0, len(city_blocks), LOCAL_RASTER_CHUNK):
+            chunk = city_blocks.iloc[start:start + LOCAL_RASTER_CHUNK]
+            values = density_for_blocks(chunk, config)
+            append_checkpoint(
+                [{"block_id": str(bid),
+                  columns[0]: None if pd.isna(v) else float(v)}
+                 for bid, v in zip(chunk[block_id_field], values)],
+                checkpoint_name, config)
+            processed += len(chunk)
+            print(f"    {processed:,}/{total:,} "
+                  f"({100*processed/total:.1f}%)", flush=True)
+
+    result = load_checkpoint(checkpoint_name, config, verbose=False)
+    return result if result is not None else pd.DataFrame()
+
+
 def extract_indicator(name, blocks_gdf, config, force=False):
     """Zonal-mean one indicator over every block, resuming from checkpoint."""
+    if name in LOCAL_RASTER_INDICATORS:
+        return extract_local_raster(name, blocks_gdf, config, force)
     builder, columns = BLOCK_INDICATORS[name]
     scale = block_scale(name, config)
     block_id_field = config["blocks"]["block_id_field"]

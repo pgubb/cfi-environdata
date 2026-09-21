@@ -24,6 +24,7 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `builtup_fraction` | float | proportion (0–1) | Share of block area covered by built surface (GHSL 100 m). |
 | `ntl_mean_radiance` | float | nW/cm²/sr | Mean nighttime radiance over the trailing 12 months (VIIRS 500 m). |
 | `hrsl_density` | float | people per km² | Mean population density (Meta HRSL ~31 m). |
+| `pop2026_density` | float | people per km² | Mean population density, **year 2026** (WorldPop Global2 R2025A, 100 m constrained). Read from a local raster, not GEE. |
 | `building_height_mean` | float | metres | Mean height of buildings in the block (Open Buildings 2.5D, 0.5 m). |
 | `building_fractional_count` | float | buildings per 0.5 m pixel | Mean fractional building count. **Not a building count** — see below. |
 | `heat_exposure_index` | float | z-score | Within-city composite heat exposure. 0 is the city mean. |
@@ -39,6 +40,7 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `builtup_fraction` | 0.267 (0.132) | 0.355 (0.156) | 0.392 (0.103) | 0.359 (0.196) | **0.408 (0.109)** |
 | `ntl_mean_radiance` | 39.8 (36.3) | 40.8 (18.7) | 28.2 (10.5) | 22.5 (15.7) | **59.2 (21.9)** |
 | `hrsl_density` | 23,045 (16,303) | 62,084 (41,778) | 20,003 (2,725) | 10,091 (12,280) | 18,246 (20,658) |
+| `pop2026_density` | 12,727 (7,262) | 26,963 (9,681) | 18,742 (7,768) | 8,588 (6,818) | 13,602 (6,168) |
 | `building_height_mean` | 7.5 (4.9) | 8.7 (4.6) | 8.0 (6.1) | 6.4 (3.7) | **10.3 (8.5)** |
 | `no2_mean` | 39.2 (13.3) | 110.6 (19.6) | 122.7 (22.8) | 55.5 (14.5) | **144.2 (25.7)** |
 | `heat_exposure_index` | -0.00 (0.64) | -0.00 (0.73) | 0.00 (0.73) | 0.00 (0.77) | -0.00 (0.80) |
@@ -107,6 +109,20 @@ Elevation is the instructive case: fine resolution but almost no *within*-city v
 
 **`heat_exposure_index` is a THREE-component analogue**, not the business-level index. Blocks extract `lst_max_c` but not `lst_mean_c`, so it is the mean of signed within-city z-scores of `lst_max_c`, `builtup_fraction` and minus `canopy_fraction`. Conceptually parallel to the four-component business-level index, **not numerically comparable to it**. As with that index, levels are **not comparable across cities** — every city has mean 0 by construction.
 
+**At block level, `pop2026_density` is the better population layer — the opposite of the business-level verdict.** Two reasons, neither of which applies at 150 m buffers:
+
+| | `hrsl_density` | `pop2026_density` |
+|---|---|---|
+| Within-city variance (block) | 63% | **62%** — effectively tied |
+| Within-city variance (150 m business buffer) | 59% | 31% — much worse |
+| Distinct values, Jakarta | 21,350 of 26,293 blocks | **26,293 of 26,293** |
+| Missing blocks | 1,576 | **41** |
+| Reference year | ~2015–2020 | **2026** |
+
+The quantisation row is the decisive one for a map: HRSL allocates uniformly within a census unit, so whole groups of neighbouring blocks share an identical value and the map shows census-unit boundaries as much as population. `pop2026_density` gives essentially every block its own value. Its weakness — poor spatial discrimination — shows up at business-buffer scale, where HRSL's finer 31 m grid wins; at ~149 m blocks the two are level on variance and `pop2026` wins on coverage, continuity and currency.
+
+**The two run at very different levels and must never be mixed or averaged**: `pop2026_density` is below `hrsl_density` in every city, by roughly half in Delhi (26,963 vs 62,084). Pick one per analysis and say which.
+
 **`hrsl_density` is quantised into modes.** HRSL disaggregates census counts, allocating uniformly across detected buildings within a census unit, so blocks inside one unit share a density. Jakarta's values cluster tightly (1st–99th percentile 17,275–25,143) while Addis Ababa's span 10,602–86,224, Delhi's 10,688–169,258 and Sao Paulo's 467–91,631 — Sao Paulo's 1st percentile is by far the lowest, so it contributes genuinely near-empty blocks no other city has. This is a property of the product, not of the extraction: the business-level pipeline reproduces the same percentiles to within ~1 person/km².
 
 **Missing values** (of 120,314 blocks):
@@ -117,6 +133,7 @@ Elevation is the instructive case: fine resolution but almost no *within*-city v
 | `hand_m` | 9 | outside product coverage (all Lagos) |
 | `hrsl_density` | 1,576 | outside product coverage (Delhi 782, Addis Ababa 267, Sao Paulo 254, Lagos 192, Jakarta 81) |
 | `building_height_mean` | 812 | no buildings detected in the block (Delhi 317, Lagos 216, Sao Paulo 119, Jakarta 105, Addis Ababa 55) |
+| `pop2026_density` | 41 | block contains no populated cell (Lagos 36, Delhi 5) — the best coverage of the three population layers |
 | `heat_exposure_index` | 662 | derived from lst_max_c |
 
 ---

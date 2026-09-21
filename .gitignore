@@ -33,6 +33,11 @@ data/output/*.csv
 data/output/blocks/*.csv
 data/output/blocks/long_*.csv
 
+# WorldPop R2025A national rasters (~1.7 GB, downloaded from hub.worldpop.org).
+# Source data, not derived: re-downloadable via python/fetch_worldpop.py, so it
+# is kept out of the repo rather than committed.
+data/input/worldpop/*.tif
+
 # Real business coordinates (never commit — exact locations are sensitive).
 # data/input/ is otherwise tracked, so the GSMM ingest output is named here.
 data/input/gsmm_listings.csv

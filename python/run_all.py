@@ -47,6 +47,9 @@ INDICATORS = [
      "extract_no2", "extract_no2"),
     ("buildings",   "Indicator 13: Building Density (Open Buildings 2.5D)",
      "extract_buildings", "extract_buildings"),
+    # Indicator 14 reads LOCAL rasters, not GEE — see extract_pop2026.py.
+    ("pop2026",     "Indicator 14: Population Density (WorldPop R2025A 2026)",
+     "extract_pop2026", "extract_pop2026"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.

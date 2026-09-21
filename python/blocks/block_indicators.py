@@ -120,6 +120,14 @@ def _no2(config, bounds):
     return img.select(["no2_mean"])
 
 
+# Indicators computed from LOCAL RASTERS rather than a GEE image. These have no
+# builder and no reduction scale: run_all_blocks.py dispatches them to their own
+# zonal function instead of reduceRegions. Keeping them in BLOCK_INDICATORS (with
+# a None builder) means the merge, caching, manifest and registry validation all
+# treat them like any other indicator.
+LOCAL_RASTER_INDICATORS = {"pop2026"}
+
+
 # name -> (builder, output columns). Order is the run order.
 BLOCK_INDICATORS = {
     "terrain":     (_terrain,     ["slope_degrees"]),
@@ -132,6 +140,8 @@ BLOCK_INDICATORS = {
     "buildings":   (_buildings,   ["building_height_mean",
                                    "building_fractional_count"]),
     "no2":         (_no2,         ["no2_mean"]),
+    # Local raster (WorldPop R2025A 2026), no GEE builder.
+    "pop2026":     (None,         ["pop2026_density"]),
 }
 
 # Config sections whose values affect each block indicator, for fingerprinting.
@@ -145,6 +155,7 @@ BLOCK_CONFIG_KEYS = {
     "hrsl":        ["hrsl"],
     "buildings":   ["buildings"],
     "no2":         ["no2", "time_window"],
+    "pop2026":     ["pop2026"],
 }
 
 # Reduction scale per indicator, read FROM CONFIG so the two pipelines cannot
@@ -157,6 +168,10 @@ BLOCK_CONFIG_KEYS = {
 # holds a value per NATIVE cell, so reducing finer than native inflates the
 # result (WorldPop reduced at 30m reads 9.4x its value at the native 93m).
 def block_scale(name: str, config: dict) -> int:
+    if name in LOCAL_RASTER_INDICATORS:
+        raise ValueError(
+            f"{name} is read from a local raster, not a GEE image; it has no "
+            f"reduction scale. run_all_blocks.py should not reach here.")
     literals = {"terrain": 30, "flood": 90}   # flood: MERIT Hydro native ~90m
     if name in literals:
         return literals[name]

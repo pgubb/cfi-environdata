@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 91 columns: 7 passthrough from the input, 75 GEE-derived, 8 derived exceedance rates, and 1 composite index.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 93 columns: 7 passthrough from the input, 75 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, and 1 composite index.
 
-**Last generated:** 2026-09-14 (13 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+**Last generated:** 2026-09-21 (14 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
 **Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
 
@@ -465,19 +465,54 @@ A **second, independent** population estimate alongside indicator 9. Read both t
 - **The two buffer radii are still near-redundant, despite the finer grid.** Measured on the full 10,989-business run: `hrsl_density_50m` vs `hrsl_density_150m` correlate at **r = 0.9974**, essentially the same redundancy as WorldPop's 0.9987. The finer grid does *not* fix this, because the redundancy is driven by the spatial autocorrelation of population — the neighbourhood 50m and 150m around a point is largely the same place — not by pixel size. **Use the 150m column** (it also has zero missing values against 13 at 50m).
 - **Effectively uncorrelated with built-up surface** (`builtup_fraction_150m`): **r = -0.05**, against 0.41 for WorldPop. Despite being building-footprint-derived, HRSL shares no variance with the GHSL built-up product at this scale, so it introduces no collinearity into a model containing both.
 
-### Choosing between the two population sources
+### Choosing between the THREE population sources
 
 Full-sample means over all 24,497 businesses, 150m buffers (GHS-POP column is from a 300-point probe run on the original three-city frame, not extracted and not available for Delhi or Sao Paulo):
 
-| City | `hrsl_density_150m` | `pop_density_150m` (WorldPop) | GHS-POP 2025 (probe only) |
-|---|---|---|---|
-| Addis Ababa | 26,443 | 12,314 | ~21,100 |
-| Delhi | 66,336 | 27,288 | — |
-| Jakarta | 20,005 | 18,506 | ~21,900 |
-| Lagos | 12,894 | 14,357 | ~7,400 |
-| Sao Paulo | 20,802 | 18,174 | — |
+| City | `hrsl_density_150m` | `pop_density_150m` (WorldPop G1 2020) | `pop2026_density_150m` (WorldPop G2 2026) | GHS-POP 2025 (probe only) |
+|---|---|---|---|---|
+| Addis Ababa | 26,443 | 12,314 | 15,342 | ~21,100 |
+| Delhi | 66,336 | 27,288 | 33,892 | — |
+| Jakarta | 20,005 | 18,506 | 22,545 | ~21,900 |
+| Lagos | 12,894 | 14,357 | 16,499 | ~7,400 |
+| Sao Paulo | 20,802 | 18,174 | 16,114 | — |
 
 **The two extracted sources rank neighbourhoods similarly but disagree sharply on level.** Within-city correlation between `hrsl_density_150m` and `pop_density_150m` is high — Addis Ababa **0.95**, Jakarta **0.82**, Delhi **0.78**, Lagos **0.73** — yet Addis Ababa's *level* differs by 2.1x (26,443 vs 12,314), Delhi's by 2.4x (66,336 vs 27,288), and Lagos even reverses sign of the gap. Pooled within city the correlation is **0.76**; pooled raw across cities it is **0.81**, a figure that looks reassuring only because Delhi's extreme level dominates the spread — on the three-city frame the same raw pooled figure was **0.74**. Treat neither as evidence the products agree. Practically: either source supports *within-city* relative comparisons; neither should be trusted for absolute density or for cross-city level comparisons.
+
+#### Which one to use — the short version
+
+| If you need… | Use |
+|---|---|
+| A population figure for the **fieldwork period** | `pop2026_density_*` (the only 2026 layer) |
+| **Complete coverage**, no gaps to drop or impute | `pop2026_density_*` (zero missing at both radii) |
+| To rank businesses by density **within one city** | `hrsl_density_150m` or `pop_density_150m` — **not** `pop2026` |
+| A **block map** of population | `pop2026_density` (see the block dictionary — it beats HRSL there) |
+
+**`pop2026` has the best coverage and the weakest within-city detail, and those pull in opposite directions.** It is the only source with no missing values at either radius (`pop_density` has 101 at 50m and 28 at 150m; `hrsl_density` has 100 at 50m), and it is contemporaneous with fieldwork. But only **31%** of its variance is within-city, against **76%** for `pop_density_150m` and **59%** for `hrsl_density_150m`. WorldPop predict this themselves: the Global2 release statement warns the series can look "less spatially detailed than Global1 or not capturing high urban population densities well", being tuned instead for reliable totals across broader areas. At business-buffer scale that warning is borne out.
+
+**It also disagrees with the other two within city, and unevenly.** Correlations with `pop_density_150m` / `hrsl_density_150m`:
+
+| City | vs WorldPop G1 | vs HRSL |
+|---|---|---|
+| Lagos | +0.86 | +0.78 |
+| Addis Ababa | +0.59 | +0.43 |
+| Jakarta | +0.56 | +0.42 |
+| Delhi | +0.22 | **−0.17** |
+| Sao Paulo | **+0.05** | **+0.09** |
+
+In Sao Paulo the three sources are essentially unrelated within city, and in Delhi `pop2026` is *negatively* related to HRSL. **Any within-city population result in those two cities should be checked against all three sources before it is believed.**
+
+**Three sources, three constructs — do not treat them as versions of one thing.**
+
+| | `pop_density_*` | `hrsl_density_*` | `pop2026_density_*` |
+|---|---|---|---|
+| Product | WorldPop Global1 | Meta HRSL | WorldPop Global2 R2025A |
+| Year | 2020 | ~2015–2020 | **2026** |
+| Native | 100m (3″) | ~31m | 100m (3″) |
+| Allocation | **Unconstrained** (all land) | Constrained (detected buildings) | **Constrained** (built-settlement model) |
+| Source | GEE catalog | GEE community asset | **Local download** — not in GEE |
+
+`pop_density_*` and `pop2026_density_*` are both WorldPop but share neither the mastergrid, the constraint, nor the modelling generation. **A 2020→2026 difference between them measures method change as much as population growth**; if growth is the question, neither this pair nor any pair here can answer it.
 
 **These products disagree substantially, and the disagreement is not noise.** Addis Ababa spans a 3x range across the three estimates and Delhi a 2.4x range between the two extracted sources, while Jakarta is comparatively tight — consistent with published findings that gridded population products diverge most where census infrastructure is weakest ([Uncovering large inconsistencies between ML-derived gridded settlement datasets](https://arxiv.org/pdf/2404.13127)).
 
@@ -610,6 +645,53 @@ Addis Ababa and Delhi have the smallest footprints — dense small-plot developm
 - **`building_height_mean_150m` is the only vertical measure in the pipeline** — built-up fraction, canopy, population and nightlights are all planar. Its slight negative correlation with built-up fraction is interesting in itself: the most densely *covered* ground here tends to carry lower buildings.
 - **2023 vintage against 2026 fieldwork** — three years stale, but the most recent building data available and newer than GHSL's 2020 built-up surface.
 - **Only the 150m buffer carries height and area.** At 50m the buffer holds too few buildings for a stable average; the count is still reported at both radii.
+
+---
+
+## Indicator 14: Population Density — WorldPop R2025A, year 2026
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `pop2026_density_50m` | float | people/km² | Mean population density within 50 m. |
+| `pop2026_density_150m` | float | people/km² | Mean population density within 150 m. |
+
+**Data source:** WorldPop **Global2, release R2025A v1**, constrained 100 m population counts, **year 2026**. Downloaded per country from [hub.worldpop.org](https://hub.worldpop.org/geodata/) as `{iso}_pop_2026_CN_100m_R2025A_v1.tif`; see the [release statement](https://data.worldpop.org/repo/prj/Global_2015_2030/R2025A/doc/Global2_Release_Statement_R2025A_v1.pdf).
+
+> ### The only indicator not read from Google Earth Engine
+>
+> R2025A is not in the GEE catalog — GEE's WorldPop collection is the older Global1 series behind indicator 9. The five national GeoTIFFs (~1.7 GB) are downloaded by `python/fetch_worldpop.py` into `data/input/worldpop/` (git-ignored, re-downloadable) and read locally with `rasterio`. The zonal maths lives in `python/worldpop2026.py` and is **shared by the point and block pipelines**, the same anti-drift convention this repo applies to its GEE image builders.
+
+**Why 2026.** Fieldwork ran Jul–Sep 2026, making this the only population layer contemporaneous with the survey. The price is that **2026 is a projection**: the modelling inputs are the c.2010 and c.2020 census rounds, and later years are interpolated and rescaled to UN WPP 2024 national totals, with uncertainty growing with distance from the census. Observed-but-stale (indicator 9, 2020) versus contemporaneous-but-modelled (this) is a genuine trade-off, which is why both are extracted.
+
+**Constrained, not unconstrained.** Population is allocated only to cells the built-settlement model identifies as built; unbuilt land is **NoData (−99999), not zero** — in the Addis Ababa window just 8 cells of ~97,000 are exactly 0. R2025A ships constrained only, so there is no unconstrained variant to match indicator 9 against.
+
+### Two things that would silently corrupt this column, and how they are handled
+
+**1. Cell values are counts per cell, and every cell has a different ground area.** The grid is 3 arc-seconds in EPSG:4326, so a cell covers 8,536 m² in Jakarta but 7,539 m² in Delhi — **13% apart**. Assuming a flat 100×100 m would bias every cross-city density comparison, by a different amount in each city. Cell area is computed per raster row from the spheroid.
+
+| City | Cell ground area |
+|---|---|
+| Jakarta (6.2°S) | 8,536 m² |
+| Lagos (6.5°N) | 8,531 m² |
+| Addis Ababa (9.0°N) | 8,481 m² |
+| Sao Paulo (23.6°S) | 7,868 m² |
+| Delhi (28.6°N) | 7,539 m² |
+
+This is the local-raster form of the `pixelArea` trap that CLAUDE.md flags for the GEE layers.
+
+**2. A 50 m buffer is smaller than one cell.** Which cells count as "inside" therefore dominates the answer, so each overlapping cell contributes the exact fraction `w` of its own area that the zone covers:
+
+```
+density = 1e6 × Σ(count_i × w_i) / Σ(cell_area_m²_i × w_i)
+```
+
+i.e. people in the overlap ÷ ground area of the overlap. An unweighted mean of cell densities would let a cell clipped at 1% of its area count as much as one fully enclosed.
+
+**NoData convention.** `pop2026.nodata_as_zero: false` excludes NoData from both numerator and denominator (density over *populated* ground), matching how GEE masking makes indicator 10 behave. **Measured 2026-09-21: the choice is immaterial here** — 150 m business buffers touch 0.00–0.07% NoData cells across the five cities and the two conventions agree to within 0.1%, because businesses sit on built land. It would matter if the frame ever extended to rural blocks.
+
+**Verification.** Summing the rasters over rough metro bounding boxes returns 5.70 M for Addis Ababa (published ~5.5 M), 36.1 M Delhi, 18.2 M Sao Paulo, 17.8 M Jakarta and 14.2 M Lagos — all plausible for boxes drawn wider than the administrative city. The zonal weighting is unit-tested against closed-form answers on a synthetic raster (whole cells, half cells, unequal splits, NoData exclusion, off-grid zones returning NaN rather than 0).
+
+**Coverage: zero missing values** at both radii — the only population source with none. See *Choosing between the THREE population sources* under indicator 10 for when to prefer it, and the important caveat that only 31% of its variance is within-city.
 
 ---
 

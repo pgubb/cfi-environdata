@@ -6,6 +6,8 @@
 
 The utility has two pipelines:
 1. **Point-level**: Extracts indicators at individual business GPS coordinates → `data/output/all_indicators.csv` (consumed by `cfi-map2r2-data`)
+
+**13 of the 14 indicators read Google Earth Engine.** Indicator 14 (WorldPop R2025A) reads downloaded GeoTIFFs with `rasterio` instead, because that release is not in the GEE catalog — run `python3 fetch_worldpop.py` once before `run_all.py`, or it fails with a clear message naming the missing file. In the block pipeline it is dispatched by `LOCAL_RASTER_INDICATORS` in `block_indicators.py` to its own zonal function rather than `reduceRegions`; everything downstream (checkpointing, manifest, merge, registry validation) treats it identically to a GEE indicator.
 2. **Block-level**: Computes zonal statistics over sampling frame block polygons → `data/output/blocks/all_block_indicators.csv` (for study-area-level spatial analysis)
 
 ## Architecture
@@ -38,7 +40,10 @@ python/
   extract_heatstress.py      # Indicator 11: ERA5-Land humid heat stress (sWBGT)
   extract_no2.py             # Indicator 12: Sentinel-5P tropospheric NO2
   extract_buildings.py       # Indicator 13: Open Buildings 2.5D count/height/size
-  run_all.py                 # Orchestrator: runs all 13 + merges
+  extract_pop2026.py         # Indicator 14: WorldPop R2025A 2026 (LOCAL raster, not GEE)
+  fetch_worldpop.py          # Downloads the 5 WorldPop R2025A national rasters
+  worldpop2026.py            # Shared zonal engine for indicator 14 (points + blocks)
+  run_all.py                 # Orchestrator: runs all 14 + merges
   blocks/                    # Block-level aggregation pipeline
     utils_blocks.py          # Block polygon loading, batching, checkpoints
     block_indicators.py      # Specs reusing the POINT pipeline's image builders
@@ -48,6 +53,7 @@ python/
     extract_longitudinal.py  # 45-day periodic block series -> long format
 data/
   input/                     # Business coordinate CSVs
+  input/worldpop/            # WorldPop R2025A national GeoTIFFs (~1.7 GB, git-ignored)
   input/blocks/              # Sampling frame GeoJSON files (from blockexplorer repo)
   output/                    # Point-level indicator CSVs + data_dictionary.md
   output/blocks/             # Block-level indicator CSVs + block_data_dictionary.md
@@ -65,6 +71,7 @@ GSMM listing exports first, then extract:
 ```bash
 cd python
 python3 prepare_gsmm_input.py   # rebuilds data/input/gsmm_listings.csv
+python3 fetch_worldpop.py       # one-off: WorldPop R2025A rasters for indicator 14
 python3 run_all.py
 ```
 
@@ -115,7 +122,7 @@ Each `extract_*.py` can also be run standalone. The working directory must be `p
 - **Column naming**: Buffer-dependent columns include the radius suffix (e.g., `canopy_fraction_50m`, `builtup_fraction_150m`).
 - **GSMM ingestion**: `prepare_gsmm_input.py` consumes `../cfi-map2r2-data/data/processed/gsmm_coords_for_environdata.csv`. **That repo owns all preparation and cleaning** — export selection, de-duplication, date parsing, decimal normalisation — so those rules are not reimplemented here and cannot drift. This script only adapts the file to the input contract, and its one substantive job is the key: the source `business_id` is the bare Enterprise ID, unique only *within* a country (5 ids appear in two cities each), so it is rewritten as `<Country>_<Enterprise ID>` with the raw id kept as `enterprise_id`. It fails loudly rather than de-duplicating if a collision survives. `gsmm.include_cities` restricts the ingest.
 - **Registry**: `make_registry.py` generates `registry_environment.R`, drop-in registry rows for the analysis app in `cfi-map2r2-data`. It fails if any `all_indicators.csv` column is neither registered nor explicitly excluded, so it cannot drift. Regenerate after adding indicators; never hand-edit the `.R`.
-- **Population sources**: indicators 9 (WorldPop) and 10 (Meta HRSL) measure the same construct by different methods. They rank neighbourhoods similarly *within* a city (r = 0.73–0.95) but disagree sharply on level (Addis Ababa 12,314 vs 26,443 people/km²; Delhi 27,288 vs 66,336 — a factor of 2.4), so neither supports absolute or cross-city density claims. Both are extracted deliberately as a sensitivity check. **HRSL is still the better default, but its margin narrowed as cities were added.** At the 150m radius HRSL has no missing values against WorldPop's 28 (North Jakarta coast, which HRSL shows are densely populated); at 50m HRSL now has 100 gaps of its own (86 of them Delhi) against WorldPop's 101, so the coverage advantage is a 150m result, not a general one. The independence argument weakened too: HRSL's raw pooled correlation with `builtup_fraction_150m` went -0.05 (three cities) → +0.19 (four) → **+0.17** (five), against WorldPop's 0.41 → 0.34 → 0.32 — HRSL is no longer meaningfully *uncorrelated*, only less correlated. Sao Paulo is the one city where the two sources nearly agree on level (18,174 vs 20,802), which is itself a caution: agreement is a property of the city, not of the products. Never put both in one model. HRSL is a **community-catalog** asset (`projects/sat-io/...`), the pipeline's only third-party dependency.
+- **Population sources**: indicators 9 (WorldPop) and 10 (Meta HRSL) measure the same construct by different methods. They rank neighbourhoods similarly *within* a city (r = 0.73–0.95) but disagree sharply on level (Addis Ababa 12,314 vs 26,443 people/km²; Delhi 27,288 vs 66,336 — a factor of 2.4), so neither supports absolute or cross-city density claims. A THIRD was added 2026-09-21: indicator 14 (`pop2026_density_*`), WorldPop Global2 R2025A for **2026** — the only layer contemporaneous with fieldwork, the only one with no missing values at either radius, and the only one read from a local download rather than GEE. **But only 31% of its variance is within-city, against 76% for WorldPop G1 and 59% for HRSL**, exactly as WorldPop's own release statement warns for Global2 ("less spatially detailed than Global1... not capturing high urban population densities well"). Use it for level, currency and coverage; use G1 or HRSL to rank businesses within a city. It disagrees with both in Sao Paulo (r = +0.05 / +0.09) and Delhi (+0.22 / **-0.17**), so check all three before believing a within-city population result in those two cities. At BLOCK level the verdict flips — it ties HRSL on variance (62% vs 63%) and beats it on coverage and quantisation, so it is the better block map. All three are extracted deliberately as a sensitivity check. **HRSL is still the better default, but its margin narrowed as cities were added.** At the 150m radius HRSL has no missing values against WorldPop's 28 (North Jakarta coast, which HRSL shows are densely populated); at 50m HRSL now has 100 gaps of its own (86 of them Delhi) against WorldPop's 101, so the coverage advantage is a 150m result, not a general one. The independence argument weakened too: HRSL's raw pooled correlation with `builtup_fraction_150m` went -0.05 (three cities) → +0.19 (four) → **+0.17** (five), against WorldPop's 0.41 → 0.34 → 0.32 — HRSL is no longer meaningfully *uncorrelated*, only less correlated. Sao Paulo is the one city where the two sources nearly agree on level (18,174 vs 20,802), which is itself a caution: agreement is a property of the city, not of the products. Never put both in one model. HRSL is a **community-catalog** asset (`projects/sat-io/...`). It and indicator 14 are the pipeline's only dependencies outside the main GEE catalog, and indicator 14 is the only one outside GEE entirely.
 - **Cross-city day-counts need the rate columns.** `heat_days_gt*` and `aod_days_gt*` count exceedances among *observed* days, and cloud cover makes that denominator range 404–40 (LST) and 347–91 (AOD) across cities. `run_all.py` derives `*_frac_gt*` companions (`utils.add_exceedance_rates`) — always compare on those. Using raw AOD counts reverses the city ranking, putting Lagos last on air pollution when the rate puts it first. Rainfall needs no rate (CHIRPS is gap-filled, `rain_valid_obs` = 730 everywhere).
 - **Density conversions must reduce at the source's native scale.** These datasets store a count per cell; `ee.Image.pixelArea()` reports area at the *requested* scale, so reducing finer than native inflates density (WorldPop at 30m vs 93m: 9.4x too high).
 - **Coordinates are sensitive**: `data/input/gsmm_listings.csv` holds exact business locations and is git-ignored. `data/input/` is otherwise tracked, so never remove that rule, and never copy the file into `cfi-map2r2-data`. Only the derived indicators are safe to share back.

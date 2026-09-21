@@ -324,6 +324,62 @@ population:
   # Native grid is 0.000833333 deg ~= 92.77m at the equator.
   scale_m: 93
 
+# ---------- Indicator 14: Population Density (WorldPop R2025A, 2026) ----------
+pop2026:
+  # WorldPop Global2 R2025A, 100m CONSTRAINED population counts, year 2026.
+  #
+  # WHY THIS EXISTS ALONGSIDE INDICATOR 9. They are different products, not a
+  # version bump of one:
+  #   indicator 9  (pop_density_*)     Global1 2000-2020, UNCONSTRAINED, 2020
+  #   indicator 14 (pop2026_density_*) Global2 R2025A,    CONSTRAINED,   2026
+  # Global1 disaggregates census counts across all land; Global2 allocates only
+  # to cells where the built-settlement model found buildings. Global2 also
+  # rebuilt the mastergrid, so the two do not share cell boundaries. Treat them
+  # as independent estimates, never as a time series: a 2020->2026 difference
+  # would confound real growth with a change of method, constraint and grid.
+  #
+  # WHY 2026. Fieldwork ran Jul-Sep 2026, so this is the only population layer
+  # contemporaneous with the survey; indicator 9 is six years stale. The cost is
+  # that 2026 is a PROJECTION - the modelling inputs are the c.2010 and c.2020
+  # census rounds, and years beyond them are interpolated and rescaled to UN
+  # WPP 2024 national totals, with uncertainty growing with distance from the
+  # census. Observed-but-stale vs contemporaneous-but-modelled is a real
+  # trade-off; both are extracted so it can be tested rather than assumed.
+  #
+  # NOT IN GOOGLE EARTH ENGINE. GEE's WorldPop collection is the Global1 series.
+  # R2025A is published only as per-country downloads, so this indicator reads
+  # local rasters via python/fetch_worldpop.py. It is the only one that does.
+  release: "R2025A"
+  file_version: 1
+  year: 2026
+  raster_dir: "data/input/worldpop"
+  country_iso3:
+    Sao Paulo: "BRA"
+    Addis Ababa: "ETH"
+    Delhi: "IND"
+    Jakarta: "IDN"
+    Lagos: "NGA"
+  # Same 3 arc-second grid as indicator 9 (~92.77m at the equator), but a
+  # DIFFERENT mastergrid - cells do not align between the two releases.
+  buffer_radii_m: [50, 150]
+  # Cell values are counts PER CELL. Density divides by each cell's true ground
+  # area, computed per raster row from the spheroid rather than assumed to be
+  # 100x100m. A 3 arc-second cell measures 8,536 m2 at Jakarta (6.2S), 8,531 at
+  # Lagos, 8,481 at Addis Ababa, 7,868 at Sao Paulo (23.6S) and 7,539 at Delhi
+  # (28.6N) - the extremes are 13% apart, which would bias every cross-city
+  # density comparison if a flat 100x100m were assumed.
+  # NoData (-99999) means "no built settlement here" on a CONSTRAINED layer:
+  # in the Addis Ababa window only 8 cells of 97,000 are exactly 0, the rest of
+  # the unpopulated ground is NoData. false = density over POPULATED ground
+  # (NoData excluded from numerator and denominator, matching how GEE masks and
+  # how indicator 10's HRSL behaves); true = density over ALL ground.
+  # MEASURED 2026-09-21: the distinction is immaterial for this study's
+  # geometries. 150m business buffers touch 0.00-0.07% NoData cells across the
+  # five cities and the two conventions agree to <0.1%, because businesses and
+  # the sampling grid both sit on built land. Left at false for consistency
+  # with indicator 10; flip it only if the frame ever extends to rural blocks.
+  nodata_as_zero: false
+
 # ---------- Indicator 10: Population Density (Meta HRSL) ----------
 # A SECOND, independent population estimate alongside indicator 9 (WorldPop).
 # The two disagree substantially — measured on 300 business points at 150m,
@@ -424,8 +480,13 @@ blocks:
   #                        rainfall 5.5km (6%), night LST (2%), most AOD
   #                        (2%), elevation (0.4% — the between-city range
   #                        swamps anything local; slope from the same DEM is 84%)
+  #   added 2026-09-21: pop2026, WorldPop R2025A at 100m. Included on the same
+  #                     test as the rest — see the coverage note in the block
+  #                     data dictionary for its measured within-city variance.
+  #                     It is the one block indicator read from a LOCAL RASTER
+  #                     rather than a GEE image, so it has no reduction scale.
   indicators: ["terrain", "heat", "flood", "canopy", "builtup",
-               "nightlights", "hrsl", "buildings", "no2"]
+               "nightlights", "hrsl", "buildings", "no2", "pop2026"]
   # Per-indicator batch overrides. Where request cost is dominated by the
   # COLLECTION REDUCTION rather than the number of blocks, far fewer and much
   # larger requests is strictly faster - the finding that took the point
