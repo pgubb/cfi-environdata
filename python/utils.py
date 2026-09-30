@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from pathlib import Path
 
 import ee
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -300,11 +301,13 @@ INDICATOR_CONFIG_KEYS = {
     "no2":         ["no2", "time_window"],
     "buildings":   ["buildings"],
     "pop2026":     ["pop2026"],
+    "wind":        ["wind", "time_window"],
+    "windgust":    ["windgust", "time_window"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.
 TIME_SERIES_INDICATORS = {"heat", "rainfall", "airquality", "nightlights",
-                          "heatstress", "no2"}
+                          "heatstress", "no2", "wind", "windgust"}
 
 # Keys that affect only speed, never results. Tuning these must NOT invalidate
 # a cache — otherwise raising a batch size silently forces a multi-hour rerun.
@@ -444,6 +447,76 @@ def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
                 out[rate_col] = values
             else:
                 out.insert(out.columns.get_loc(col) + 1, rate_col, values)
+    return out
+
+
+def add_building_spacing(merged: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Add `building_spacing_m` and `building_spacing_ratio`: fire-spread proxies.
+
+    DERIVED, not extracted — pure arithmetic on the Open Buildings columns, so
+    like the exceedance rates these are recomputed every run and cannot go
+    stale against the data they come from.
+
+    WHY THESE EXIST. The survey asks about fire (clim_event_fire,
+    clim_damage_fire, clim_closure_fire) and had no environmental counterpart.
+    There is no usable satellite FIRE product for this population: FIRMS active
+    fire is 1km against ~150m blocks, urban fires are small and brief against
+    2-4 MODIS overpasses a day, and MCD64A1 burned area is calibrated on
+    vegetation scars. Worse, the misses would be DIFFERENTIAL — the occasional
+    large industrial fire detected, every market-stall fire missed, which is
+    precisely the population studied here. So this measures structural
+    SUSCEPTIBILITY TO SPREAD instead, from the 0.5m building data already
+    extracted.
+
+    THE GEOMETRY. With `n` buildings of mean footprint `A` spread over a buffer
+    of area `S`, the characteristic centre-to-centre spacing on a square
+    lattice is sqrt(S/n), and the building itself occupies sqrt(A) of that, so
+    the edge-to-edge gap is
+
+        building_spacing_m = sqrt(S / n) - sqrt(A)
+
+    `building_spacing_ratio` divides that by mean building height. Radiant heat
+    flux between facades depends on separation relative to facade height, not
+    on separation alone, so a tall pair 5m apart is a worse prospect than a
+    single-storey pair at the same gap. The two rank cities DIFFERENTLY and
+    both are kept: Sao Paulo is mid-pack on raw gap (5.2m) but the most exposed
+    of the five on the ratio (0.48), because its buildings are much the tallest.
+
+    WHAT THEY ARE NOT. Uncalibrated structural proxies for how readily fire
+    would spread between premises — not a fire risk model, not an incidence
+    measure, and silent about ignition, which is about wiring, cooking fuel and
+    generators rather than geometry. Both inherit the Open Buildings level
+    biases (count ~25% high, footprint ~37% low), which act in OPPOSITE
+    directions here, so treat them as relative measures and do not read a
+    spacing in metres as a surveyed distance.
+    """
+    cfg = (config.get("derived", {}) or {}).get("building_spacing")
+    if not cfg:
+        return merged
+
+    count_col, area_col = cfg["count_column"], cfg["area_column"]
+    height_col, radius = cfg["height_column"], float(cfg["buffer_radius_m"])
+    needed = [count_col, area_col, height_col]
+    missing = [c for c in needed if c not in merged.columns]
+    if missing:
+        print(f"  ! building_spacing skipped; missing columns: {missing}")
+        return merged
+
+    out = merged.copy()
+    buffer_area = np.pi * radius ** 2
+    n = out[count_col].where(out[count_col] > 0)      # 0 buildings -> undefined
+    a = out[area_col].where(out[area_col] > 0)
+    spacing = np.sqrt(buffer_area / n) - np.sqrt(a)
+    # A negative gap means the lattice cannot hold the footprints implied by
+    # the count — saturated coverage. Clip to 0 rather than emit a negative
+    # distance, and report it, because a non-zero count would mean the two
+    # Open Buildings bands disagree.
+    n_neg = int((spacing < 0).sum())
+    if n_neg:
+        print(f"  ! building_spacing: {n_neg} rows had a negative gap, clipped to 0")
+    out["building_spacing_m"] = spacing.clip(lower=0)
+    h = out[height_col].where(out[height_col] > 0)
+    out["building_spacing_ratio"] = out["building_spacing_m"] / h
     return out
 
 

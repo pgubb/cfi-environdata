@@ -16,7 +16,7 @@ import pandas as pd
 from utils import (
     load_config, init_gee, load_business_points, save_output,
     indicator_fingerprint, load_manifest, save_manifest, clear_checkpoint,
-    add_exceedance_rates, add_heat_exposure_index,
+    add_exceedance_rates, add_heat_exposure_index, add_building_spacing,
 )
 
 # Indicator name -> (banner, module, function). Order is the run order.
@@ -50,6 +50,10 @@ INDICATORS = [
     # Indicator 14 reads LOCAL rasters, not GEE — see extract_pop2026.py.
     ("pop2026",     "Indicator 14: Population Density (WorldPop R2025A 2026)",
      "extract_pop2026", "extract_pop2026"),
+    ("wind",        "Indicator 15: Near-surface Wind (ERA5-Land)",
+     "extract_wind", "extract_wind"),
+    ("windgust",    "Indicator 16: Wind Gusts (ERA5 hourly)",
+     "extract_windgust", "extract_windgust"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.
@@ -186,6 +190,7 @@ def main():
     # client-side arithmetic, so they never need a cache of their own).
     merged = add_exceedance_rates(merged)
     merged = add_heat_exposure_index(merged, config)
+    merged = add_building_spacing(merged, config)
 
     save_output(merged, "all_indicators", config)
 

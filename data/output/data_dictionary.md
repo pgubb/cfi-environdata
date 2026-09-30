@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 93 columns: 7 passthrough from the input, 75 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, and 1 composite index.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 108 columns: 7 passthrough from the input, 88 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, and 2 derived fire-spread proxies.
 
-**Last generated:** 2026-09-21 (14 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+**Last generated:** 2026-09-30 (16 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
 **Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
 
@@ -692,6 +692,157 @@ i.e. people in the overlap ÷ ground area of the overlap. An unweighted mean of 
 **Verification.** Summing the rasters over rough metro bounding boxes returns 5.70 M for Addis Ababa (published ~5.5 M), 36.1 M Delhi, 18.2 M Sao Paulo, 17.8 M Jakarta and 14.2 M Lagos — all plausible for boxes drawn wider than the administrative city. The zonal weighting is unit-tested against closed-form answers on a synthetic raster (whole cells, half cells, unequal splits, NoData exclusion, off-grid zones returning NaN rather than 0).
 
 **Coverage: zero missing values** at both radii — the only population source with none. See *Choosing between the THREE population sources* under indicator 10 for when to prefer it, and the important caveat that only 31% of its variance is within-city.
+
+---
+
+## Indicator 15: Near-surface Wind (ERA5-Land)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `wind_mean_ms` | float | m/s | Mean daily-mean 10 m wind speed over the window. |
+| `wind_p95_ms` | float | m/s | 95th percentile of daily-mean wind speed. |
+| `wind_max_daily_mean_ms` | float | m/s | Windiest single day, as a daily **mean**. |
+| `wind_peak_bound_ms` | float | m/s | **Upper bound** on daily peak speed — not a gust, see below. |
+| `wind_days_gt3ms` | float | days | Days with daily-mean speed above 3 m/s. |
+| `wind_days_gt5ms` | float | days | Days with daily-mean speed above 5 m/s. |
+
+**Data source:** ECMWF ERA5-Land daily aggregates (`ECMWF/ERA5_LAND/DAILY_AGGR`), bands `u_component_of_wind_10m`, `v_component_of_wind_10m` and their per-component daily min/max. Speed is `sqrt(u² + v²)`. Same collection as indicator 11.
+
+**Why this exists.** The survey asks `clim_event_wind`, `clim_damage_wind` and `clim_closure_wind`; until now those had no environmental counterpart at all.
+
+> ### Read the ceiling on this indicator before using it
+>
+> It is a **city-level climatological control**, and it cannot identify windstorms.
+>
+> - **~11 km reanalysis grid**, coarser than any of these cities. Within-city variance is 4–17% depending on the column, so there is essentially no within-city gradient to read.
+> - **No gust band, and gusts are what cause damage.** ERA5-Land carries daily means and per-component daily extremes only. The gust field lives in ERA5 single-levels at ~31 km — coarser still.
+> - **No urban canopy.** 10 m wind over a modelled land surface is not what a shopkeeper experiences in a street canyon, and it cannot represent funnelling between buildings.
+> - **The winds are light.** Nothing in this frame approaches a strong breeze.
+
+| City | `wind_mean_ms` | `wind_p95_ms` | `wind_days_gt3ms` | `wind_days_gt5ms` |
+|---|---|---|---|---|
+| Lagos | 2.9 | 4.4 | 327 | 11 |
+| Delhi | 2.0 | 3.7 | 116 | 1 |
+| Sao Paulo | 1.9 | 4.1 | 115 | 10 |
+| Jakarta | 1.3 | 3.0 | 47 | 0 |
+| Addis Ababa | 1.3 | 2.3 | 2 | 0 |
+
+**The thresholds are calibrated to separate cities, not to mark hazard.** Conventional damage thresholds — Beaufort 6 "strong breeze" at 10.8 m/s, gale at 17.2 — return **zero** for every business in all five cities on a daily-mean field. 3 and 5 m/s were chosen against the observed distribution purely to discriminate. Read them as "windier days", never "storm days". An 8 m/s threshold was tested and **removed**: 0 days in four cities, 1 day in Sao Paulo, 0.0% within-city variance.
+
+**`wind_peak_bound_ms` is an upper bound, not a measurement.** It is the largest value of `sqrt(max|u|² + max|v|²)` across the window, from each component's daily extreme. The two components need not peak in the same hour, so combining their separate extremes **overstates any speed that actually occurred** — and a reanalysis daily extreme is not a gust in any case. It exists only because `wind_max_daily_mean_ms` understates peaks so badly. The `_bound` in the name is meant to stay visible wherever it is used; do not report it as an observed wind speed.
+
+**Coastal fill.** ERA5-Land is masked over water, and at 11 km a coastal cell can read as sea while the businesses inside it are plainly on land. Without the fill this indicator was empty for **512 Lagos and 8 Jakarta businesses** that indicator 11 — same collection, same points — covered fine. Masked cells are filled from neighbouring land cells using the identical `focal_mean(radius=3, units="pixels", iterations=3)` as indicator 11, which is safe only because both reduce at ERA5's native scale. Verified: the fill changed no previously-valid value.
+
+No observation-count normalisation is needed — ERA5-Land is a gap-free reanalysis.
+
+---
+
+## Indicator 16: Wind Gusts (ERA5 hourly)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `gust_max_ms` | float | m/s | Strongest hourly gust in the window. |
+| `gust_p99_ms` | float | m/s | 99th percentile of hourly gusts. |
+| `gust_p95_ms` | float | m/s | 95th percentile of hourly gusts. |
+| `gust_mean_ms` | float | m/s | Mean hourly gust — climatology, not hazard. |
+| `gust_hours_gt10p8ms` | float | hours | Hours above Beaufort 6 (strong breeze). |
+| `gust_hours_gt13p9ms` | float | hours | Hours above Beaufort 7 (near gale). |
+| `gust_hours_gt17p2ms` | float | hours | Hours above Beaufort 8 (gale). |
+
+**Data source:** ECMWF ERA5 single levels, hourly (`ECMWF/ERA5/HOURLY`), band `wind_gust_since_previous_post_processing_10m` — the maximum gust in the preceding hour. The alternative band `instantaneous_10m_wind_gust` is a snapshot on the hour and would miss peaks between readings.
+
+**Why a second wind indicator.** ERA5-*Land* has no gust band at all, so indicator 15 can only measure daily-mean wind. Gusts exist solely in ERA5 single levels, on a coarser grid. This is a deliberate trade of resolution for the right variable:
+
+| | Indicator 15 | Indicator 16 |
+|---|---|---|
+| Collection | ERA5-**Land** | ERA5 single levels |
+| Native | ~11 km | **~28 km** |
+| Quantity | daily **mean** wind | hourly **gust** |
+| Answers | climatological windiness | damage-relevant extremes |
+
+### What this buys: thresholds that finally mean something
+
+On the daily-mean field nothing in the entire five-city frame exceeds 8.4 m/s, so no conventional damage threshold could ever be crossed — indicator 15's counts are "windier days", not hazard. Gusts reach magnitudes that damage premises, and the Beaufort scale becomes usable:
+
+| City | hours >10.8 (B6) | hours >13.9 (B7) | hours >17.2 (B8, gale) | max gust |
+|---|---|---|---|---|
+| **Sao Paulo** | **1,272** | **372** | **114** | **27.3** m/s |
+| Delhi | 376 | 46 | 0.9 | 17.3 |
+| Addis Ababa | 399 | 15 | 0 | 14.9 |
+| Jakarta | 231 | 12 | 0.5 | 15.8 |
+| Lagos | 160 | 0 | 0 | 13.2 |
+
+*(of 17,520 hours in the 730-day window)*
+
+**Sao Paulo is the wind-hazard city by a hundredfold margin** — 114 gale-force hours against zero or one elsewhere, and a peak of 27.3 m/s, Beaufort 10. That is a difference in kind, not a gradient, and nothing in indicator 15 could show it.
+
+**Mean gusts rank the cities differently from extreme gusts, and the difference is real.** Lagos and Sao Paulo tie on `gust_mean_ms` at 6.0 m/s, yet Sao Paulo records 114 gale hours and Lagos none. Lagos is steadily breezy; Sao Paulo is peaky. For anything about damage, use the hour-counts or `gust_max_ms`, never the mean.
+
+> ### What this does NOT buy: read no within-city pattern into it
+>
+> At ~28 km this is **2.5× coarser than indicator 15** and about one value per city. Within-city variance runs **1–8%** across the gust columns, lower than indicator 15's already-low 4–17%.
+>
+> The clearest demonstration: the two wind indicators sit on different, misaligned grids, and their within-city correlation is **negative** — `gust_max_ms` against `wind_p95_ms` gives r = **−0.33**. Two near-constant fields disagreeing about where their grid-cell boundaries fall is exactly what a "within-city wind gradient" amounts to here. **Use these columns to rank cities.**
+>
+> No available source fixes this. Gusts are a boundary-layer quantity that no satellite observes over land, so every gridded product is a reanalysis. Scatterometers (ASCAT, Sentinel-1) are ocean-only; the Global Wind Atlas downscales to 250 m but models mean wind resource, not gusts; and IBTrACS cyclone tracks are irrelevant — none of these five cities sits in a meaningful tropical-cyclone belt.
+
+**No coastal fill needed**, unlike indicators 11 and 15: ERA5 single levels covers ocean as well as land, so there is no water mask to punch holes in coastal cities. Zero missing values.
+
+**No observation-count normalisation needed** — ERA5 is a gap-free reanalysis, so every window contains all 17,520 hours and the hour-counts are directly comparable across cities.
+
+> ### An implementation note worth keeping
+>
+> The idiom the daily-resolution indicators use for thresholds — one mapped collection per threshold, then `.sum()` — **does not scale to hourly data**. Three separate passes over a single year (8,760 images) exceeded a 10-minute timeout. A single `map` producing a multi-band indicator image, summed once, does the same work in ~44 s. `ee.Reducer.fixedHistogram(threshold, 1000, 1)` gives identical counts and is also cheap, but returns an array per feature rather than a scalar. Verified: both approaches return exactly 686 / 204 / 72 hours for Sao Paulo over one year.
+
+---
+
+## Derived: fire-spread susceptibility
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `building_spacing_m` | float | metres | Characteristic edge-to-edge gap between buildings within 150 m. **Lower = more exposed.** |
+| `building_spacing_ratio` | float | — | That gap divided by mean building height. **Lower = more exposed.** |
+
+Computed after the merge in `run_all.py` (`utils.add_building_spacing`) from the indicator 13 columns — pure arithmetic, recomputed every run, so like the exceedance rates they cannot go stale.
+
+**Why a structural proxy rather than a fire product.** The survey asks `clim_event_fire`, `clim_damage_fire` and `clim_closure_fire`, and **no satellite fire product can serve this population**:
+
+| Product | Native | Why it fails here |
+|---|---|---|
+| FIRMS active fire (MODIS) | 1 km | One pixel spans ~44 blocks; urban fires are small and brief against 2–4 overpasses a day |
+| MCD64A1 burned area | 500 m | Calibrated on vegetation burn scars; returns essentially nothing in a dense city |
+| VIIRS active fire | 375 m | Finest available, but not in the GEE catalog |
+
+The decisive objection is not the miss rate but that the misses would be **differential** — the occasional large industrial fire detected, every market-stall fire missed, which is exactly the population studied here. An indicator with that failure mode is worse than none. On smoke specifically, `aod_mean` already contains it; the only product that would separate smoke from dust is Sentinel-5P's absorbing aerosol index at ~3.5×7 km, far too coarse for a business location.
+
+**The geometry.** With `n` buildings of mean footprint `A` in a buffer of area `S`, the characteristic centre-to-centre spacing on a square lattice is `sqrt(S/n)`, and the building occupies `sqrt(A)` of it:
+
+```
+building_spacing_m    = sqrt(S / n) − sqrt(A)
+building_spacing_ratio = building_spacing_m / mean building height
+```
+
+The ratio exists because radiant heat flux between burning facades depends on separation relative to facade **height**, not separation alone: a tall pair 5 m apart is a worse prospect than a single-storey pair at the same gap.
+
+**Keep both — they rank the cities differently.**
+
+| City | `building_spacing_m` | `building_spacing_ratio` |
+|---|---|---|
+| Addis Ababa | 7.6 | 1.06 |
+| Lagos | 5.8 | 0.93 |
+| Delhi | 5.4 | 0.57 |
+| Sao Paulo | 5.2 | **0.48** (most exposed) |
+| Jakarta | **4.2** (tightest gap) | 0.61 |
+
+Sao Paulo is mid-pack on raw gap but the most exposed on the ratio, because its buildings are far the tallest at 12.7 m. The two are only **+0.68** correlated within city, so neither substitutes for the other.
+
+**These are among the most spatially informative variables in the dataset** — 89% and 75% within-city variance — and `building_spacing_m` is essentially **uncorrelated with population density** (r = −0.02 with `hrsl_density_150m`), so it carries information the crowding measures do not. It correlates −0.64 with `builtup_fraction_150m` and +0.40 with `canopy_fraction_150m`, both in the expected direction.
+
+> ### What these are not
+>
+> **Uncalibrated structural proxies** for how readily fire would spread between premises. Not a fire risk model, not an incidence measure, and **silent about ignition** — which is about wiring, cooking fuel and generators, not geometry. Note `clim_adapt_generator` exists as a survey item and `ntl_cv_radiance` was added with generators in mind.
+>
+> Both inherit the Open Buildings level biases (count ~25% high, footprint ~37% low), which act in **opposite directions** here, so the net bias is unknown. **Compare locations with them; do not read a spacing in metres as a surveyed distance.**
 
 ---
 
