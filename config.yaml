@@ -398,6 +398,59 @@ wind:
   batch_size: 1000
   getinfo_timeout_sec: 600
 
+# ---------- Indicator 17: UTCI and mean radiant temperature (ERA5-HEAT) ----------
+utci:
+  # COMPLEMENT TO INDICATOR 11, not a replacement. wbgt_* stays as the
+  # continuity measure; UTCI is the preferred one on physics. sWBGT uses
+  # temperature and humidity only; UTCI integrates temperature, humidity, WIND
+  # and MEAN RADIANT TEMPERATURE - the proper version of a quantity this
+  # pipeline otherwise holds as separate crude pieces.
+  #
+  # WHAT IT MEASURES THAT sWBGT PROVABLY CANNOT, on this frame:
+  #   - It separates the two cities sWBGT puts at zero. wbgt_days_gt31c is 0
+  #     for BOTH Addis Ababa and Sao Paulo and the registry has to explain
+  #     they are at zero for different reasons (dry vs cool). UTCI measures it:
+  #     Sao Paulo 180 days >32C and 494 >26C, against Addis Ababa 0 and 314.
+  #   - It finds Delhi's extreme tail. On sWBGT, Lagos (421 days) looks worse
+  #     than Delhi (223). UTCI agrees Lagos has more VERY STRONG days (403 v
+  #     269) but shows Delhi is the ONLY city reaching EXTREME heat stress -
+  #     19 days above 46C, peaking at 48.2C.
+  #   - Mean radiant temperature is a genuinely new variable (46.7-54.5C here),
+  #     the radiant load a street-front trader stands in. sWBGT ignores it.
+  #
+  # TWO CEILINGS.
+  #   RESOLUTION: ~28km, 2.5x coarser than indicator 11's ERA5-Land grid. A
+  #   CITY-LEVEL control with no within-city variation. Accepted because the
+  #   measure it sits beside is already city-level (0-4% within-city), so no
+  #   spatial information is lost - same reasoning as indicator 16.
+  #   DEPENDENCY: a THIRD-PARTY asset, not an official GEE catalog entry. With
+  #   indicator 10's HRSL this is the second such dependency; if Climate Engine
+  #   moves it, this indicator breaks. The extractor fails loudly rather than
+  #   writing nulls. Fallback is computing UTCI from ERA5 directly (radiation
+  #   fluxes -> MRT, then the published 6th-order polynomial) - feasible but a
+  #   lot of error-prone code against a hosted version.
+  dataset: "projects/climate-engine-pro/assets/ce-era5-heat"
+  # SOURCE IS IN KELVIN. The extractor converts everything to Celsius.
+  bands:
+    utci_mean: "utci_mean"
+    utci_max: "utci_max"
+    mrt_max: "mrt_max"
+  trailing_years: 2
+  # The standard UTCI thermal-stress categories, applied to the DAILY MAXIMUM:
+  # 26 moderate, 32 strong, 38 very strong, 46 extreme. Unlike indicator 15's
+  # wind thresholds these are published cut-offs, and all four discriminate
+  # across these cities.
+  thresholds_c: [26, 32, 38, 46]
+  # ERA5 single levels, 0.25 degrees.
+  scale_m: 27830
+  # NO COASTAL FILL NEEDED, unlike indicators 11 and 15: verified 725/725 valid
+  # days at the Lagos lagoon and Victoria Island points where ERA5-Land is
+  # masked as water. Note the window holds 725 of 730 days - 5 days absent from
+  # the collection globally, so the denominator is identical everywhere and no
+  # rate normalisation is required.
+  batch_size: 1000
+  getinfo_timeout_sec: 900
+
 # ---------- Indicator 16: Wind gusts (ERA5 hourly) ----------
 windgust:
   # THE DAMAGE-RELEVANT WIND VARIABLE. Indicator 15 measures climatological

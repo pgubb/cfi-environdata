@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 108 columns: 7 passthrough from the input, 88 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, and 2 derived fire-spread proxies.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 117 columns: 7 passthrough from the input, 97 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, and 2 derived fire-spread proxies.
 
-**Last generated:** 2026-09-30 (16 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+**Last generated:** 2026-10-01 (17 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
 **Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
 
@@ -734,6 +734,56 @@ i.e. people in the overlap ÷ ground area of the overlap. An unweighted mean of 
 **Coastal fill.** ERA5-Land is masked over water, and at 11 km a coastal cell can read as sea while the businesses inside it are plainly on land. Without the fill this indicator was empty for **512 Lagos and 8 Jakarta businesses** that indicator 11 — same collection, same points — covered fine. Masked cells are filled from neighbouring land cells using the identical `focal_mean(radius=3, units="pixels", iterations=3)` as indicator 11, which is safe only because both reduce at ERA5's native scale. Verified: the fill changed no previously-valid value.
 
 No observation-count normalisation is needed — ERA5-Land is a gap-free reanalysis.
+
+---
+
+## Indicator 17: UTCI and Mean Radiant Temperature (ERA5-HEAT)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `utci_dmax_mean_c` | float | °C | Mean of daily-**maximum** UTCI — what a typical day peaks at. |
+| `utci_mean_c` | float | °C | Mean of daily-mean UTCI (includes nights). |
+| `utci_max_c` | float | °C | Highest daily-maximum UTCI in the window. |
+| `utci_days_gt26c` | float | days | Days peaking above **moderate** heat stress. |
+| `utci_days_gt32c` | float | days | Days peaking above **strong** heat stress. |
+| `utci_days_gt38c` | float | days | Days peaking above **very strong** heat stress. |
+| `utci_days_gt46c` | float | days | Days peaking above **extreme** heat stress. |
+| `mrt_dmax_mean_c` | float | °C | Mean of daily-maximum mean radiant temperature. |
+| `mrt_max_c` | float | °C | Peak mean radiant temperature. |
+
+**Data source:** ERA5-HEAT via `projects/climate-engine-pro/assets/ce-era5-heat`, ~28 km, daily aggregates. **Source values are in Kelvin**; all columns here are converted to Celsius. Day-counts are taken on the **daily maximum** — a day counts if its *peak* reached the category.
+
+**This complements indicator 11, it does not replace it.** `wbgt_*` is retained for continuity and as a robustness check — the same arrangement as the three population sources. UTCI is the preferred measure on physics: sWBGT uses temperature and humidity only, while **UTCI integrates temperature, humidity, wind (which cools) and mean radiant temperature (which heats)**. It is the proper version of a quantity this pipeline otherwise holds as separate crude pieces.
+
+| City | UTCI mean | UTCI daily-peak | UTCI max | MRT daily-peak | >26 | >32 | >38 | **>46** |
+|---|---|---|---|---|---|---|---|---|
+| Lagos | 29.7 | 36.1 | 40.6 | 53.0 | 724 | 646 | 197 | 0 |
+| Jakarta | 28.9 | 36.2 | 40.0 | 53.8 | 725 | 702 | 126 | 0 |
+| Delhi | 24.4 | 34.9 | **48.2** | 54.2 | 633 | 481 | 268 | **18** |
+| Sao Paulo | 19.3 | 27.9 | 38.1 | 46.9 | 493 | 180 | 1 | 0 |
+| Addis Ababa | 14.8 | 26.0 | 30.3 | 47.0 | 394 | 0 | 0 | 0 |
+
+*(of 725 days; UTCI categories: 26–32 moderate, 32–38 strong, 38–46 very strong, >46 extreme)*
+
+### Four things it measures that sWBGT cannot
+
+**1. It separates the two cities sWBGT puts at zero.** `wbgt_days_gt31c` is exactly **0 for both Addis Ababa and Sao Paulo**, and that column's description has to explain they are at zero *for different reasons* — Addis Ababa dry, Sao Paulo cool. UTCI measures the difference instead of caveating it: Sao Paulo **180** days of strong heat stress and 493 of moderate, against Addis Ababa's **0** and 394.
+
+**2. It finds Delhi's extreme tail.** Delhi is the only city of the five to reach **extreme** heat stress at all — 18 days above 46 °C, peaking at 48.2 °C. The sWBGT columns top out at a 31 °C threshold and cannot show this.
+
+**3. It reverses the sWBGT ranking at the top, for a physical reason.** On `wbgt_days_gt31c`, Lagos (421) leads Delhi (223). On `utci_days_gt38c`, **Delhi (268) leads Lagos (197)**. sWBGT ignores wind, and **Lagos is the windiest of the five** (`wind_mean_ms` 2.9 against Delhi's 2.0), so its heat stress is moderated by air movement that sWBGT structurally cannot see. Where the two disagree, prefer UTCI — and say which you used.
+
+**4. Mean radiant temperature is a physically new variable.** It runs 46.9–54.2 °C against air temperatures of 15–27 °C: the radiant load someone standing outdoors actually experiences. **It does not track air temperature** — Addis Ababa at 15.2 °C mean air temperature records the same radiant load (47.0) as Sao Paulo at 19.5 °C, because high-altitude sun is intense regardless of how cool the air is. Relevant to street-front and open-fronted premises specifically.
+
+> ### Two ceilings
+>
+> **Resolution — city-level only.** At ~28 km this is 2.5× coarser than indicator 11's ERA5-Land grid, and within-city variance runs **0.1–11%**. Read it as a city-level control, never as a within-city gradient. The trade is accepted because the measure it sits beside is *already* city-level at 0–4% within-city variance, so no spatial information is lost — the same reasoning as indicator 16.
+>
+> **A third-party dependency.** `climate-engine-pro` is not an official GEE catalog entry. With indicator 10's HRSL this is the **second** such dependency, and if Climate Engine moves or withdraws the asset this indicator breaks. The extractor checks readability and **fails loudly rather than writing a column of nulls**. The fallback is computing UTCI from ERA5 directly — radiation fluxes give mean radiant temperature, and UTCI itself is a published 6th-order polynomial in four variables — feasible, but a lot of error-prone code to maintain against a hosted version.
+
+**No coastal fill needed**, unlike indicators 11 and 15. Verified 725/725 valid days at the Lagos lagoon and Victoria Island points where ERA5-Land is masked as water. Zero missing values.
+
+**No rate normalisation needed.** The window holds 725 of 730 days — 5 days absent from the collection globally, so the denominator is identical in every city and the day-counts are directly comparable.
 
 ---
 

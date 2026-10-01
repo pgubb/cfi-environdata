@@ -54,6 +54,8 @@ INDICATORS = [
      "extract_wind", "extract_wind"),
     ("windgust",    "Indicator 16: Wind Gusts (ERA5 hourly)",
      "extract_windgust", "extract_windgust"),
+    ("utci",        "Indicator 17: UTCI and Mean Radiant Temp (ERA5-HEAT)",
+     "extract_utci", "extract_utci"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.
