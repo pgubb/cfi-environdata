@@ -97,6 +97,9 @@ def extract_heatstress(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     gee_cfg = config["gee"]
     hs_cfg = config["heatstress"]
     scale = hs_cfg.get("scale_m", 11132)
+    # See the config note: cost is per-request, not per-point, so batch large.
+    batch_size = hs_cfg.get("batch_size", gee_cfg["batch_size"])
+    timeout = hs_cfg.get("getinfo_timeout_sec")
 
     remaining = filter_remaining_points(
         df, load_checkpoint(INDICATOR_NAME, config))
@@ -109,7 +112,7 @@ def extract_heatstress(df: pd.DataFrame, config: dict) -> pd.DataFrame:
               f"window {start_date} to {end_date}")
         stacked, names = build_heatstress_image(config, start_date, end_date)
 
-        for batch in batch_points(city_df, gee_cfg["batch_size"]):
+        for batch in batch_points(city_df, batch_size):
             features = [
                 ee.Feature(ee.Geometry.Point([r["longitude"], r["latitude"]]),
                            {"business_id": str(r["business_id"])})
@@ -119,7 +122,9 @@ def extract_heatstress(df: pd.DataFrame, config: dict) -> pd.DataFrame:
                 reducer=ee.Reducer.first(), scale=scale)
 
             batch_rows = []
-            for f in safe_getinfo(sampled)["features"]:
+            got = (safe_getinfo(sampled, timeout=timeout) if timeout
+                   else safe_getinfo(sampled))
+            for f in got["features"]:
                 props = f["properties"]
                 row = {"business_id": props["business_id"]}
                 for nm in names:

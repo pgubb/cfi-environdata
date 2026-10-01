@@ -202,6 +202,16 @@ heatstress:
   # distinct values per city, so treat it as a city-level control rather than
   # within-city variation.
   scale_m: 11132
+  # Cost is dominated by reducing the 730-image collection, not by the number
+  # of points - the same profile as rainfall, airquality, no2, wind, windgust
+  # and utci, which all batch at 1000. This indicator was left on the
+  # gee.batch_size default of 50 until 2026-10-01 simply because it predates
+  # the finding. Measured on indicator 15, which has an identical profile:
+  # ~5 points/s at 50 against ~71 at 1000, i.e. 90 minutes down to about 6.
+  # Performance-only, so it is excluded from the fingerprint and setting it
+  # neither invalidates the cached column nor triggers a recompute.
+  batch_size: 1000
+  getinfo_timeout_sec: 600
 
 # ---------- Indicator 12: Traffic-related Air Pollution (NO2) ----------
 no2:
