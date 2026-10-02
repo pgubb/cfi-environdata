@@ -17,6 +17,7 @@ from utils import (
     load_config, init_gee, load_business_points, save_output,
     indicator_fingerprint, load_manifest, save_manifest, clear_checkpoint,
     add_exceedance_rates, add_heat_exposure_index, add_building_spacing,
+    add_flood_vulnerable_any,
 )
 
 # Indicator name -> (banner, module, function). Order is the run order.
@@ -193,6 +194,7 @@ def main():
     merged = add_exceedance_rates(merged)
     merged = add_heat_exposure_index(merged, config)
     merged = add_building_spacing(merged, config)
+    merged = add_flood_vulnerable_any(merged, config)
 
     save_output(merged, "all_indicators", config)
 

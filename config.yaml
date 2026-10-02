@@ -269,6 +269,26 @@ buildings:
 # Computed after the merge from columns already extracted (pure client-side
 # arithmetic), so they need no cache of their own and are recomputed every run.
 derived:
+  # FLOOD EXPOSURE BY EITHER MECHANISM. hand_flood_vulnerable is fluvial and
+  # pluvial (within 5m of nearest drainage); coastal_lowland is storm surge and
+  # tidal (a coastal city below 10m). A business can be exposed by one and not
+  # the other, so neither alone answers "is this business flood-exposed".
+  #
+  # IT ONLY CHANGES ANYTHING IN THE TWO COASTAL CITIES, and barely in one of
+  # them. coastal_lowland is false by construction outside flood.coastal_cities,
+  # so in Addis Ababa, Delhi and Sao Paulo this IS hand_flood_vulnerable.
+  # Measured: Lagos 2,687 -> 2,890 of 3,095 (86.8% -> 93.4%), Jakarta
+  # 2,777 -> 2,778 of 4,072 (no material change - coastal_lowland there is
+  # almost entirely a subset of the HAND flag).
+  #
+  # CONSEQUENCE: this is a CROSS-CITY exposure definition. The data dictionary
+  # already warns hand_flood_vulnerable discriminates poorly inside flat
+  # coastal cities; flagging 93% of Lagos makes that worse. To rank businesses
+  # WITHIN a city use the continuous hand_m instead of either binary.
+  flood_vulnerable_any:
+    name: "flood_vulnerable_any"
+    components: ["hand_flood_vulnerable", "coastal_lowland"]
+
   # FIRE-SPREAD SUSCEPTIBILITY, the environmental counterpart to the survey's
   # clim_event_fire / clim_damage_fire / clim_closure_fire items, which had
   # none. Derived arithmetic on the Open Buildings columns, not an extraction.

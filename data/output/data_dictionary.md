@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 117 columns: 7 passthrough from the input, 97 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, and 2 derived fire-spread proxies.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 118 columns: 7 passthrough from the input, 97 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, 2 derived fire-spread proxies, and 1 derived flood-exposure union.
 
-**Last generated:** 2026-10-01 (17 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+**Last generated:** 2026-10-02 (17 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
 **Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
 
@@ -127,6 +127,7 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 | `jrc_max_extent` | integer | binary (0/1) | 1 if the location falls within the maximum observed water extent (1984–2021), 0 otherwise. Indicates whether surface water has *ever* been detected at this location in the Landsat archive. |
 | `jrc_recurrence` | float | percentage (0–100) | Water recurrence: percentage of months with water detection, 1984–2021. `NaN` where the pixel has never been observed as water — which is **almost everywhere**: in the 2026-08-26 run this column was null for **10,970 of 10,989 rows (99.8%)**, and all 19 non-null values were exactly 100.0. Effectively unusable as a continuous variable at business locations. Use `jrc_max_extent` (fully populated binary) instead. |
 | `coastal_lowland` | integer | binary (0/1) | 1 if the business is in a designated coastal city (Lagos or Jakarta) **and** its SRTM elevation is below 10 metres above sea level. 0 otherwise. A proxy for storm-surge and tidal flood exposure. |
+| `flood_vulnerable_any` | integer | binary (0/1) | **Derived.** 1 if `hand_flood_vulnerable` **or** `coastal_lowland` is 1. Flood-exposed by either mechanism — see below. |
 
 ### HAND
 
@@ -140,6 +141,33 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 **Analytical notes:**
 - HAND is a topographic proxy for flood susceptibility, not a hydrodynamic flood model. It does not account for drainage infrastructure, levees, or pluvial (rainfall-driven) flooding. It is most reliable for identifying fluvial (river) floodplain exposure.
 - The 5m threshold is a widely used default (Nobre et al., 2011) but is not universally appropriate. In flat coastal cities like Lagos, most of the urban area may fall below 5m HAND, reducing discriminatory power. Consider exploring alternative thresholds (e.g., 2m, 3m) for coastal contexts.
+
+### `flood_vulnerable_any` — exposed by either mechanism
+
+The two flood flags describe **different hazards**, and a business can face one without the other:
+
+| Flag | Hazard | Applies to |
+|---|---|---|
+| `hand_flood_vulnerable` | fluvial and pluvial — proximity to a drainage channel | all five cities |
+| `coastal_lowland` | storm surge and tidal — low elevation on a coast | Lagos and Jakarta only |
+
+So neither alone answers "is this business flood-exposed". `flood_vulnerable_any` is their union, named `_any` to match the survey's `clim_event_any` / `clim_damage_any` convention. Computed after the merge in `run_all.py` (`utils.add_flood_vulnerable_any`), so like the exceedance rates it is recomputed every run and cannot go stale.
+
+**It only changes anything in the two coastal cities — and barely in one of them.**
+
+| City | `hand_flood_vulnerable` | `coastal_lowland` | **either** | added |
+|---|---|---|---|---|
+| Lagos | 86.8% | 85.9% | **93.4%** | +203 businesses |
+| Jakarta | 68.2% | 38.0% | **68.2%** | +1 business |
+| Delhi | 70.9% | 0% | 70.9% | — |
+| Sao Paulo | 16.4% | 0% | 16.4% | — |
+| Addis Ababa | 15.9% | 0% | 15.9% | — |
+
+`coastal_lowland` is false by construction outside `flood.coastal_cities`, so **in Addis Ababa, Delhi and Sao Paulo this column is byte-identical to `hand_flood_vulnerable`** (verified). In Jakarta the coastal flag turns out to be almost entirely a *subset* of the HAND flag — 1,547 coastal-lowland businesses, of which all but one are already within 5 m of drainage — so the union adds a single business. Only Lagos changes materially.
+
+> **Use it for cross-city exposure, not for ranking within a city.** The HAND notes above already warn that in flat coastal cities most of the urban area falls below 5 m, reducing discriminatory power. This makes that worse in the one city where it differs: **93.4% of Lagos businesses are flagged**, so the column separates almost nobody there. For within-city analysis prefer the continuous `hand_m`, which keeps the gradient a threshold throws away.
+
+**Missing-value semantics are three-valued**, not naive: TRUE if either flag is true even when the other is missing, FALSE only when both are known false, NaN otherwise. Both inputs are currently complete so this costs nothing today — it exists so the column cannot silently become wrong if `hand_m` acquires gaps on a future frame, as it already does at block level.
 
 ### JRC Global Surface Water
 

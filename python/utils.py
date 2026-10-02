@@ -452,6 +452,63 @@ def add_exceedance_rates(merged: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def add_flood_vulnerable_any(merged: pd.DataFrame, config: dict) -> pd.DataFrame:
+    """Add `flood_vulnerable_any`: exposed by EITHER flood mechanism.
+
+    The union of the two flood flags, which describe different hazards:
+
+        hand_flood_vulnerable   within 5m of the nearest drainage channel
+                                (fluvial and pluvial exposure, every city)
+        coastal_lowland         a coastal city below 10m elevation, the
+                                standard Low-Elevation Coastal Zone definition
+                                (storm surge and tidal exposure)
+
+    A business can be exposed by one and not the other, so neither alone is
+    "is this business flood-exposed". Named `_any` to match the survey's
+    clim_event_any / clim_damage_any convention.
+
+    WHERE IT ACTUALLY DIFFERS FROM hand_flood_vulnerable, measured on the
+    five-city frame. BY CONSTRUCTION it is identical in Addis Ababa, Delhi and
+    Sao Paulo, because coastal_lowland is only applied to the cities in
+    flood.coastal_cities and is false everywhere else. Among the two coastal
+    cities it adds 1 business in Jakarta and 203 in Lagos:
+
+        Lagos     2,687 -> 2,890 of 3,095   (86.8% -> 93.4%)
+        Jakarta   2,777 -> 2,778 of 4,072   (68.2% -> 68.2%)
+
+    SO READ IT AS A CROSS-CITY EXPOSURE DEFINITION, NOT A WITHIN-CITY ONE. The
+    data dictionary already warns that hand_flood_vulnerable discriminates
+    poorly inside flat coastal cities; this makes that worse in the one city
+    where it changes anything, flagging 93% of Lagos. For ranking businesses
+    within a city prefer the CONTINUOUS hand_m, which keeps the gradient a
+    threshold throws away.
+
+    NaN semantics are three-valued rather than naive: TRUE if either flag is
+    true even when the other is missing, FALSE only when both are known false,
+    NaN otherwise. Both inputs are currently complete, so this costs nothing
+    today - it exists so the column cannot silently become wrong if hand_m
+    acquires gaps on a future frame, as it already does at block level.
+    """
+    cfg = (config.get("derived", {}) or {}).get("flood_vulnerable_any")
+    if not cfg:
+        return merged
+
+    components = cfg["components"]
+    missing = [c for c in components if c not in merged.columns]
+    if missing:
+        print(f"  ! flood_vulnerable_any skipped; missing columns: {missing}")
+        return merged
+
+    out = merged.copy()
+    parts = out[list(components)]
+    any_true = (parts == 1).any(axis=1)
+    all_known_false = parts.notna().all(axis=1) & (parts == 0).all(axis=1)
+    out[cfg.get("name", "flood_vulnerable_any")] = pd.Series(
+        np.where(any_true, 1, np.where(all_known_false, 0, pd.NA)),
+        index=out.index).astype("Int64")
+    return out
+
+
 def add_building_spacing(merged: pd.DataFrame, config: dict) -> pd.DataFrame:
     """Add `building_spacing_m` and `building_spacing_ratio`: fire-spread proxies.
 
