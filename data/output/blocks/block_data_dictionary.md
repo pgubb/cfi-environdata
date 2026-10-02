@@ -2,7 +2,7 @@
 
 Zonal statistics over the **sampling-grid block polygons**, for mapping environmental indicators across a whole city. One row per block. Produced by `python/blocks/run_all_blocks.py`.
 
-**Last generated:** 2026-09-14 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame; the other four cities' values were reused unchanged, so only Sao Paulo's blocks were recomputed. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
+**Last generated:** 2026-10-02 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame. Since then two indicators changed: `pop2026_density` was added on 2026-09-21, and `lst_max_c` was recomputed on 2026-10-02 when MODIS Aqua was merged into indicator 2 — see the note on that below, because its values and city ranking both moved. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
 
 **Relationship to the business-level dataset.** Same GEE sources, same builders, same analysis window — `python/blocks/block_indicators.py` calls the point pipeline's image builders directly rather than reimplementing them, so the two cannot drift. What differs is the geometry: a zonal mean over the block polygon instead of a buffer around a point.
 

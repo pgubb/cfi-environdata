@@ -10,7 +10,7 @@ There are **two pipelines**, producing three datasets:
 
 | Pipeline | Output | Rows × cols | Unit of analysis |
 |---|---|---|---|
-| Point-level | `data/output/all_indicators.csv` | 24,497 × 117 | one listed business |
+| Point-level | `data/output/all_indicators.csv` | 24,497 × 122 | one listed business |
 | Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 15 | one sampling-grid block |
 | Block-level, longitudinal | `data/output/blocks/all_block_indicators_longitudinal.csv` | 1,925,024 × 18 | one block × 45-day period |
 
@@ -23,7 +23,7 @@ The three are **different units of analysis and must not be merged into one anot
 | # | Indicator | Source | Native | Temporal |
 |---|---|---|---|---|
 | 1 | Elevation, slope | SRTM | 30 m | Static (2000) |
-| 2 | Extreme heat days, day & night LST | MODIS LST | 1 km | 2 yr window |
+| 2 | Extreme heat days, day & night LST | MODIS LST, **Terra + Aqua** | 1 km | 2 yr window |
 | 3 | Flood vulnerability | MERIT Hydro HAND + JRC Surface Water | 30–90 m | Static / historical |
 | 4 | Tree canopy cover | ESA WorldCover | 10 m | Static (2021) |
 | 5 | Rainfall, dry days, dry spells | CHIRPS Daily | 5.5 km | 2 yr window |
@@ -32,7 +32,7 @@ The three are **different units of analysis and must not be merged into one anot
 | 8 | Built-up surface | JRC GHSL | 10 m | Static (2020) |
 | 9 | Population density | WorldPop Global1, unconstrained | 100 m | 2020 |
 | 10 | Population density | Meta HRSL | ~31 m | ~2015–20 |
-| 11 | Humid heat stress (sWBGT) | ERA5-Land | ~11 km | 2 yr window |
+| 11 | Humid heat stress (sWBGT), tropical nights | ERA5-Land | ~11 km | 2 yr window |
 | 12 | Traffic air pollution (NO₂) | Sentinel-5P TROPOMI | ~1.1 km | 2 yr window |
 | 13 | Building count, height, footprint | Google Open Buildings 2.5D | 0.5 m | 2023 |
 | 14 | Population density | WorldPop Global2 R2025A, constrained | 100 m | **2026** |
@@ -40,7 +40,20 @@ The three are **different units of analysis and must not be merged into one anot
 | 16 | Wind gusts | ERA5 hourly | ~28 km | 2 yr window |
 | 17 | UTCI, mean radiant temperature | ERA5-HEAT | ~28 km | 2 yr window |
 
-Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), a within-city `heat_exposure_index`, and the fire-spread proxies `building_spacing_m` / `building_spacing_ratio`.
+Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), a within-city `heat_exposure_index`, the fire-spread proxies `building_spacing_m` / `building_spacing_ratio`, and `flood_vulnerable_any` (exposed by either flood mechanism).
+
+> ### Several indicators deliberately overlap — read the dictionary before picking one
+>
+> Where two sources measure the same construct, **both are extracted and neither is removed**, because they disagree in ways that matter and the disagreement is itself a finding:
+>
+> | Construct | Columns | Why both |
+> |---|---|---|
+> | Population density | `pop_density_*`, `hrsl_density_*`, `pop2026_density_*` | different vintage, resolution and allocation method; they rank neighbourhoods differently in Delhi and Sao Paulo |
+> | Humid heat | `wbgt_*`, `utci_*` | sWBGT ignores wind and radiation; UTCI reverses the Lagos/Delhi ranking |
+> | Hot nights | `heat_nights_*` (surface), `tropical_nights_gt*` (air) | opposite rankings for Jakarta vs Lagos, by more than tenfold |
+> | Wind | `wind_*` (daily mean), `gust_*` (hourly gusts) | only gusts reach damage-relevant magnitudes |
+>
+> **Never average or mix the members of a pair**, and say which you used.
 
 ### Block level
 
@@ -49,10 +62,10 @@ Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), 
 **Longitudinal (6 indicators × 16 periods of 45 days):** heat, rainfall, air quality, nightlights, heat stress, NO₂. Rainfall, ERA5 heat stress and AOD are *dropped* from the static table for low spatial variation and appear here for high temporal variation.
 
 Full definitions, caveats and analytical notes are in the data dictionaries:
-- [`data/output/data_dictionary.md`](data/output/data_dictionary.md) — the 117 business-level columns
+- [`data/output/data_dictionary.md`](data/output/data_dictionary.md) — the 122 business-level columns
 - [`data/output/blocks/block_data_dictionary.md`](data/output/blocks/block_data_dictionary.md) — both block tables
 
-> **Read the dictionaries before using any indicator cross-city.** Several columns are not comparable between cities as raw values — the `*_days_gt*` counts are over *observed* days and cloud cover varies the denominator by 10×, and the ERA5-based columns at 11–28 km are city-level controls with no within-city signal.
+> **Read the dictionaries before using any indicator cross-city.** Several columns are not comparable between cities as raw values — the `heat_obs_gt*` and `aod_days_gt*` counts are over *observations actually made*, and cloud cover varies that denominator about 5–7× between cities, so use their `*_frac_*` companions. The ERA5-based columns at 11–28 km are city-level controls with no within-city signal.
 
 ## Setup
 
