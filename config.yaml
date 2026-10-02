@@ -213,11 +213,32 @@ heatstress:
   bands:
     temp: "temperature_2m"
     temp_max: "temperature_2m_max"
+    temp_min: "temperature_2m_min"
     dewpoint: "dewpoint_temperature_2m"
   trailing_years: 2
   # sWBGT thresholds (C) from ISO 7243 occupational heat-stress guidance:
   # 28 = high risk for heavy work, 31 = very high, rest breaks advised.
   thresholds_wbgt: [28, 31]
+  # TROPICAL NIGHTS (ETCCDI "TR"): nights whose MINIMUM 2m AIR temperature
+  # stays above the threshold. 20C is the standard index; 25C ("hot nights")
+  # is what discriminates at the top, since Jakarta and Lagos both saturate
+  # at 730 of 730 nights on TR20.
+  #
+  # WHY THIS SITS BESIDE indicator 2's heat_nights_* RATHER THAN REPLACING IT.
+  # Those count night LAND SURFACE temperature, a radiative proxy; TR is
+  # defined on air temperature, so only these are comparable with published
+  # climate work. They also need no observation-count normalisation - ERA5-Land
+  # is gap-free, giving all 730 nights in every city, where the LST night
+  # counts rest on denominators ranging 163 (Jakarta) to 823 (Delhi). And they
+  # REORDER THE TOP TWO: night LST puts Jakarta (0.983) just above Lagos
+  # (0.967), while on air temperature both reach 730 TR20 nights and Lagos
+  # takes 317 TR25 nights against Jakarta's 78.
+  #
+  # The 11km grid costs almost nothing here: indicator 2's night-LST columns
+  # already have only 0-2% within-city variance despite being 1km, which is
+  # why night LST is excluded from the block table. There is no spatial
+  # signal to lose.
+  thresholds_tropical_night_c: [20, 25]
   # ~11km native grid. This is COARSER THAN A CITY: expect only a handful of
   # distinct values per city, so treat it as a city-level control rather than
   # within-city variation.

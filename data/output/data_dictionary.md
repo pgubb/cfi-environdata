@@ -1,6 +1,6 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 118 columns: 7 passthrough from the input, 97 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, 2 derived fire-spread proxies, and 1 derived flood-exposure union.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 122 columns: 7 passthrough from the input, 101 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, 2 derived fire-spread proxies, and 1 derived flood-exposure union.
 
 **Last generated:** 2026-10-02 (17 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
@@ -596,8 +596,12 @@ Practical guidance:
 | `wbgt_max_c` | float | °C | Highest daily sWBGT in the window. |
 | `wbgt_days_gt28c` | integer | count of days | Days above sWBGT 28°C — ISO 7243 "high risk for heavy work". |
 | `wbgt_days_gt31c` | integer | count of days | Days above sWBGT 31°C — "very high risk, rest breaks advised". |
+| `tropical_nights_gt20c` | integer | count of nights | **Tropical nights** (ETCCDI *TR*): nights whose MINIMUM 2 m **air** temperature stayed above 20 °C, of 730. |
+| `tropical_nights_gt25c` | integer | count of nights | **Hot nights**: minimum air temperature above 25 °C. The threshold that discriminates — see below. |
+| `t2m_min_mean_c` | float | °C | Mean daily minimum air temperature — the typical overnight low. |
+| `t2m_min_c` | float | °C | Lowest daily minimum air temperature in the window. |
 
-**Data source:** ECMWF ERA5-Land daily aggregates (`ECMWF/ERA5_LAND/DAILY_AGGR`), bands `temperature_2m`, `temperature_2m_max`, `dewpoint_temperature_2m`.
+**Data source:** ECMWF ERA5-Land daily aggregates (`ECMWF/ERA5_LAND/DAILY_AGGR`), bands `temperature_2m`, `temperature_2m_max`, `temperature_2m_min`, `dewpoint_temperature_2m`.
 
 **Why this exists.** Land surface temperature (indicator 2) is the radiative temperature of the ground and carries **no humidity information**, which misranks these cities for HUMAN heat stress. Measured on the full run:
 
@@ -610,6 +614,34 @@ Practical guidance:
 | Sao Paulo | 26.3 | 19.5 | 80% | **0** |
 
 **Lagos has the LOWER surface temperature of the two coastal cities yet 5x Jakarta's heat-stress days**, because humidity at 83% removes the body's ability to cool by evaporation. Addis Ababa, tropical but dry highland at 15°C mean air temperature, records zero. **Delhi shows that humidity is not the whole story either**: at the same 64% annual mean humidity as Addis Ababa it records 223 days, because its air temperature is 9°C higher and its humidity is concentrated in the monsoon months when temperatures are also high — an annual mean humidity hides that pairing. Any analysis of the survey's `clim_heat_*` items should prefer these columns to the LST day-counts.
+
+### Tropical nights — and why they disagree with the night-LST columns
+
+Indicator 2 already carries `heat_nights_obs_gt20c` / `heat_nights_frac_gt20c`, but those count night **land surface** temperature. The standard ETCCDI tropical-nights index (*TR*) is defined on daily minimum **air** temperature, which is what these columns use.
+
+| City | `tropical_nights_gt20c` | `tropical_nights_gt25c` | `t2m_min_mean_c` | `t2m_min_c` | night-LST `frac_gt25c` |
+|---|---|---|---|---|---|
+| Lagos | **730** | **418** | 25.3 | 22.2 | 0.36 |
+| Jakarta | **729** | **39** | 23.7 | 20.4 | **0.49** |
+| Delhi | 369 | 230 | 18.9 | 3.8 | 0.30 |
+| Sao Paulo | 85 | 0 | 16.0 | 4.0 | 0.01 |
+| Addis Ababa | 0 | 0 | 9.6 | 3.7 | 0.00 |
+
+**Three reasons to prefer these over the night-LST columns for anything about overnight human exposure:**
+
+**1. It is the actual index.** Night LST is a radiative proxy; TR is defined on air temperature. Only these numbers are comparable with published climate work.
+
+**2. No coverage problem — 730 of 730 nights in every city.** ERA5-Land is a gap-free reanalysis. The night-LST counts rest on `lst_night_valid_obs` running from 163 (Jakarta) to 823 (Delhi), which is exactly why they need their `_frac_` companions. These need no normalisation at all.
+
+**3. They contradict the LST proxy at the top, by more than tenfold.** On `heat_nights_frac_gt25c`, Jakarta (0.49) leads Lagos (0.36). On air temperature, **Lagos records 418 hot nights against Jakarta's 39**. The ordering reverses and the gap is enormous.
+
+That disagreement is not noise, and it is explicable: **Jakarta's nights are warmer at the surface but cooler in the air.** Night LST means run Jakarta 25.6 °C against Lagos 24.7 °C, while minimum air temperature runs Jakarta 23.7 °C against Lagos 25.3 °C. Surface and air decouple differently in the two cities. Use the air-temperature columns for human exposure and the LST ones for the surface energy balance — **do not mix them inside a single argument**.
+
+**`tropical_nights_gt20c` saturates** at 730 for both tropical cities, so it separates the five into three groups and no further. Use the 25 °C column to rank within the top.
+
+**`t2m_min_c` separates continental from tropical.** Lagos (22.2 °C) and Jakarta (20.4 °C) never approach cold, while Sao Paulo (4.0), Delhi (3.8) and Addis Ababa (3.7) are nearly identical on their coldest night despite being very different places by day.
+
+> **Resolution.** At ~11 km these are city-level controls — within-city variance is 0.0–2.9%. That costs nothing here: indicator 2's night-LST columns already have only 0–2% within-city variance *despite being 1 km*, which is why night LST is excluded from the block table. There was no spatial signal to lose.
 
 **Processing.** Daily sWBGT uses the Australian BoM approximation `0.567*Ta + 0.393*e + 3.94`, with vapour pressure `e` from dewpoint via the Magnus formula. It pairs each day's MEAN temperature with that day's MEAN vapour pressure — pairing the two daily maxima would assume temperature and humidity peak together, which they generally do not, and would overstate stress.
 

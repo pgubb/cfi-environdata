@@ -40,6 +40,7 @@ def build_heatstress_image(config: dict, start_date: str, end_date: str):
     def to_metrics(img):
         t = img.select(b["temp"]).subtract(273.15).rename("t2m_c")
         tmax = img.select(b["temp_max"]).subtract(273.15).rename("t2m_max_c")
+        tmin = img.select(b["temp_min"]).subtract(273.15).rename("t2m_min_c")
         td = img.select(b["dewpoint"]).subtract(273.15)
         e = _saturation_vapour_pressure(td).rename("vp_hpa")       # actual
         es = _saturation_vapour_pressure(t)                        # saturation
@@ -52,7 +53,7 @@ def build_heatstress_image(config: dict, start_date: str, end_date: str):
                  .add(e.multiply(0.393))
                  .add(3.94)
                  .rename("wbgt_c"))
-        return (t.addBands([tmax, rh, wbgt])
+        return (t.addBands([tmax, tmin, rh, wbgt])
                  .copyProperties(img, ["system:time_start"]))
 
     daily = era5.map(to_metrics)
@@ -63,15 +64,38 @@ def build_heatstress_image(config: dict, start_date: str, end_date: str):
             lambda img, thr=thr: img.gt(thr)).sum())
         names.append(f"wbgt_days_gt{thr}c")
 
+    # TROPICAL NIGHTS (ETCCDI "TR"): nights whose MINIMUM 2m AIR temperature
+    # stays above the threshold. Distinct from the heat_nights_* columns of
+    # indicator 2, which count night LAND SURFACE temperature - a radiative
+    # proxy, not the quantity the standard index is defined on. Two further
+    # differences matter:
+    #
+    #   NO COVERAGE PROBLEM. ERA5-Land is a gap-free reanalysis, so every city
+    #   has all 730 nights. The LST night counts rest on lst_night_valid_obs
+    #   ranging 163 (Jakarta) to 823 (Delhi), which is why they need the
+    #   _frac_ columns; these need no normalisation at all.
+    #
+    #   IT REORDERS THE TOP TWO CITIES. On night LST, Jakarta (0.983) edges
+    #   Lagos (0.967). On air temperature both saturate at 730 TR20 nights and
+    #   the discrimination moves to TR25, where Lagos records 317 hot nights
+    #   against Jakarta's 78. The LST proxy cannot show that.
+    for thr in hs_cfg.get("thresholds_tropical_night_c", []):
+        bands.append(daily.select("t2m_min_c").map(
+            lambda img, thr=thr: img.gt(thr)).sum())
+        names.append(f"tropical_nights_gt{thr}c")
+
     for src, red, nm in [
         ("t2m_c", "mean", "t2m_mean_c"),
         ("t2m_max_c", "max", "t2m_max_c"),
+        ("t2m_min_c", "mean", "t2m_min_mean_c"),
+        ("t2m_min_c", "min", "t2m_min_c"),
         ("rh_pct", "mean", "rh_mean_pct"),
         ("wbgt_c", "mean", "wbgt_mean_c"),
         ("wbgt_c", "max", "wbgt_max_c"),
     ]:
         coll = daily.select(src)
-        bands.append(coll.mean() if red == "mean" else coll.max())
+        bands.append({"mean": coll.mean, "max": coll.max,
+                      "min": coll.min}[red]())
         names.append(nm)
 
     stacked = ee.Image.cat(bands).rename(names)

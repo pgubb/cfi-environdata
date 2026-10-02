@@ -330,6 +330,20 @@ ROWS = [
      "GEE: ERA5-Land | still well below any damage threshold",
      "Days above 5 m/s daily-mean wind speed. Rare everywhere: Lagos 11, Sao Paulo 10, Delhi 1, Jakarta and Addis Ababa effectively 0. Retained as the upper end of the observed range; an 8 m/s threshold was tested and dropped for returning a constant."),
 
+    # ---- tropical nights (indicator 11, air temperature) ----
+    ("tropical_nights_gt20c", "Tropical nights (>20C)", "env_heatstress", "continuous",
+     "GEE: ERA5-Land temperature_2m_min | ETCCDI 'TR' | gap-free, of 730",
+     "Nights in the 730-day window whose MINIMUM 2-metre AIR temperature stayed above 20C - the standard ETCCDI tropical-nights index. DISTINCT FROM heat_nights_obs_gt20c, which counts night LAND SURFACE temperature: that is a radiative proxy, this is the quantity the published index is defined on, so only this one is comparable with the climate literature. It also needs NO observation-count normalisation, because ERA5-Land is a gap-free reanalysis giving all 730 nights in every city, where the night-LST counts rest on denominators running 163 (Jakarta) to 823 (Delhi). City means: Lagos 730, Jakarta 729, Delhi 369, Sao Paulo 85, Addis Ababa 0. Jakarta and Lagos are SATURATED - literally every night of two years qualifies - so use tropical_nights_gt25c to separate them. ~11km, so a city-level control with 0% within-city variance; that costs nothing, since indicator 2's night-LST columns already have only 0-2% despite being 1km."),
+    ("tropical_nights_gt25c", "Hot nights (>25C)", "env_heatstress", "continuous",
+     "GEE: ERA5-Land temperature_2m_min | REVERSES the night-LST ranking",
+     "Nights whose minimum AIR temperature stayed above 25C. THE DISCRIMINATING THRESHOLD, since TR20 saturates at 730 for both tropical cities. City means: Lagos 418, Delhi 230, Jakarta 39, Addis Ababa 0, Sao Paulo 0. IT CONTRADICTS THE NIGHT-LST PROXY AND BY A WIDE MARGIN: on heat_nights_frac_gt25c Jakarta (0.49) leads Lagos (0.36), while here Lagos leads Jakarta more than tenfold. The two cities differ in how night surface temperature relates to air temperature - Jakarta's nights are warmer at the SURFACE (night LST mean 25.6C against Lagos 24.7C) but cooler in the AIR (Tmin 23.7C against 25.3C). For any claim about human exposure overnight prefer this column; for the surface energy balance prefer the LST one. Do not mix them in a single argument."),
+    ("t2m_min_mean_c", "Mean nightly minimum air temperature (C)", "env_heatstress", "continuous",
+     "GEE: ERA5-Land temperature_2m_min | ~11km, CITY-LEVEL",
+     "Mean of the daily MINIMUM 2-metre air temperature across the window - the typical overnight low, and the continuous measure behind the tropical-night counts. City means: Lagos 25.3C, Jakarta 23.7, Delhi 18.9, Sao Paulo 16.0, Addis Ababa 9.6. City-level control at ~11km."),
+    ("t2m_min_c", "Coldest night air temperature (C)", "env_heatstress", "continuous",
+     "GEE: ERA5-Land temperature_2m_min | the single coldest night",
+     "Lowest daily minimum air temperature reached in the window. SEPARATES THE CONTINENTAL FROM THE TROPICAL CITIES, and note the first three are nearly identical: Lagos 22.2C and Jakarta 20.4C never approach cold, while Sao Paulo (4.0C), Delhi (3.8C) and Addis Ababa (3.7C) all get genuinely cold nights despite being very different places by day. Useful as a control for whether a business faces any cold exposure at all."),
+
     # ---- UTCI / mean radiant temperature (indicator 17) ----
     ("utci_dmax_mean_c", "Mean daily-peak UTCI (C)", "env_heatstress", "continuous",
      "GEE: ERA5-HEAT ~28km (THIRD-PARTY asset) | PREFERRED humid-heat measure",
