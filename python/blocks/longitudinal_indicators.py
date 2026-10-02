@@ -17,12 +17,14 @@ import ee
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from extract_heatstress import _saturation_vapour_pressure  # noqa: E402
+from extract_heat import lst_collection                     # noqa: E402
 
 
 def _heat(config, bounds, start, end):
     cfg = config["heat"]
-    coll = (ee.ImageCollection(cfg["dataset"]).filterDate(start, end)
-            .select(cfg["band"]))
+    # Terra+Aqua via the point pipeline's shared helper, so this cannot drift
+    # from indicators 2 and the static block heat on which satellites it reads.
+    coll = lst_collection(config, start, end, "band")
     celsius = coll.map(lambda i: i.multiply(cfg["scale_factor"])
                        .add(cfg["offset_kelvin_to_celsius"]))
     return ee.Image.cat([celsius.max(), celsius.mean(), celsius.count()])
@@ -110,4 +112,17 @@ LONGITUDINAL_INDICATORS = {
     "nightlights": (_nightlights, ["ntl_mean_radiance"], 500),
     "heatstress":  (_heatstress,  ["wbgt_mean_c", "rh_mean_pct"], 11132),
     "no2":         (_no2,         ["no2_mean"], 1113),
+}
+
+# Config sections whose values affect each longitudinal indicator, for
+# fingerprinting. EVERY entry includes blocks_longitudinal and time_window
+# because the period construction - how many periods, how long, where they
+# start - changes every column, not just the source-specific ones.
+LONGITUDINAL_CONFIG_KEYS = {
+    "heat":        ["heat", "blocks_longitudinal", "time_window"],
+    "rainfall":    ["rainfall", "blocks_longitudinal", "time_window"],
+    "airquality":  ["airquality", "blocks_longitudinal", "time_window"],
+    "nightlights": ["nightlights", "blocks_longitudinal", "time_window"],
+    "heatstress":  ["heatstress", "blocks_longitudinal", "time_window"],
+    "no2":         ["no2", "blocks_longitudinal", "time_window"],
 }

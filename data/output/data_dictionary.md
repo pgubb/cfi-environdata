@@ -63,37 +63,69 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 
 | Column | Type | Units | Description |
 |---|---|---|---|
-| `heat_days_gt40c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 40°C. |
-| `heat_days_gt45c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 45°C. |
-| `heat_days_gt50c` | integer | count of days | Number of days in the trailing 2-year window where daytime land surface temperature exceeded 50°C. |
-| `heat_frac_gt40c` | float | proportion (0–1) | **Share of OBSERVED days** exceeding 40°C = `heat_days_gt40c / lst_valid_obs`. **Use this, not the raw count, for any cross-city comparison.** |
-| `heat_frac_gt45c` | float | proportion (0–1) | Share of observed days exceeding 45°C. |
-| `heat_frac_gt50c` | float | proportion (0–1) | Share of observed days exceeding 50°C. |
-| `heat_nights_gt20c` | integer | count of nights | Nights in the window whose land surface temperature stayed above 20°C. Same clear-sky caveat as the day counts — normalise with `heat_nights_frac_gt20c` for cross-city comparison. |
+| `heat_obs_gt40c` | integer | count of **observations** | Number of OBSERVATIONS in the trailing 2-year window whose daytime land surface temperature exceeded 40°C. **Not days** — Terra and Aqua can both exceed the threshold on one date. Was `heat_days_gt40c` before the Aqua merge. |
+| `heat_obs_gt45c` | integer | count of **observations** | As above, at 45°C. |
+| `heat_obs_gt50c` | integer | count of **observations** | As above, at 50°C. Rare everywhere. |
+| `heat_frac_gt40c` | float | proportion (0–1) | **Share of OBSERVATIONS** exceeding 40°C = `heat_obs_gt40c / lst_valid_obs`. Unchanged in meaning by the merge — a count over its own denominator. **Use this, not the raw count, for any cross-city comparison.** |
+| `heat_frac_gt45c` | float | proportion (0–1) | Share of observations exceeding 45°C. |
+| `heat_frac_gt50c` | float | proportion (0–1) | Share of observations exceeding 50°C. |
+| `heat_nights_obs_gt20c` | integer | count of **observations** | Night observations above 20°C. Same clear-sky caveat as the day counts — normalise with `heat_nights_frac_gt20c` for cross-city comparison. Was `heat_nights_gt20c`. |
 | `heat_nights_frac_gt20c` | float | proportion (0–1) | Share of OBSERVED nights above 20°C. Cross-city comparable. |
-| `heat_nights_gt25c` | integer | count of nights | Nights above 25°C. |
+| `heat_nights_obs_gt25c` | integer | count of **observations** | Night observations above 25°C. |
 | `heat_nights_frac_gt25c` | float | proportion (0–1) | Share of observed nights above 25°C. |
 | `lst_night_mean_c` | float | °C | Mean NIGHT-TIME land surface temperature (Aqua/Terra night overpass). |
 | `lst_night_min_c` | float | °C | Coolest night-time land surface temperature observed in the window. |
-| `lst_night_valid_obs` | integer | count of nights | Clear-sky night observations, of 730 possible. Denominator for the `heat_nights_frac_*` columns. Diagnostic, not a substantive indicator. |
-| `lst_mean_c` | float | °C | Mean daytime land surface temperature across all valid observations in the trailing 2-year window. |
-| `lst_max_c` | float | °C | Maximum daytime land surface temperature observed in the trailing 2-year window. |
-| `lst_valid_obs` | integer | count of days | Number of clear-sky (non-masked) MODIS observations at the point within the trailing 2-year window. |
+| `lst_night_valid_obs` | integer | count | Clear-sky night observations from both satellites, so of ~1,460 possible rather than 730. Denominator for the `heat_nights_frac_*` columns. Diagnostic, not a substantive indicator. |
+| `lst_mean_c` | float | °C | Mean daytime land surface temperature across all valid observations. **Now a mean over two overpass times** (~10:30 and ~13:30 local), not a consistent mid-morning mean — see below. |
+| `lst_max_c` | float | °C | Maximum daytime land surface temperature observed in the window. **Rose 2.4–8.0 °C when Aqua was merged in** — see below. |
+| `lst_valid_obs` | integer | count | Clear-sky (non-masked) MODIS observations from **both** satellites within the window, so of ~1,460 possible rather than 730. |
 | `heat_window_start` | string | date (YYYY-MM-DD) | Start of the window. Constant across all rows (2024-07-31). |
 | `heat_window_end` | string | date (YYYY-MM-DD) | End of the window. Constant across all rows (2026-07-31). |
 
-**Data source:** MODIS/Terra Land Surface Temperature and Emissivity Daily Global 1km (MOD11A1), Collection 6.1.
-- GEE asset: `MODIS/061/MOD11A1`, band `LST_Day_1km`
-- Satellite: Terra (descending node, ~10:30 local solar time overpass)
+**Data source:** MODIS Land Surface Temperature and Emissivity Daily Global 1km, Collection 6.1, from **both satellites**.
+- GEE assets: `MODIS/061/MOD11A1` (Terra) and `MODIS/061/MYD11A1` (Aqua), bands `LST_Day_1km` / `LST_Night_1km`
+- Overpasses: Terra ~10:30 and ~22:30 local; Aqua ~13:30 and ~01:30
 - Reference: Wan, Z. (2014). "New refinements and validation of the collection-6 MODIS land-surface temperature/emissivity product." *Remote Sensing of Environment*, 140, 36–45.
+
+> ### Aqua was merged in on 2026-10-02. Do not compare old and new values.
+>
+> This pipeline read Terra alone until then. Adding Aqua — the same product, same algorithm, same 927 m grid, different satellite — changed both coverage and level, and **both changes are large**.
+>
+> **Coverage roughly doubled, and helped most where it was worst.** Valid day observations, measured at city centres over the 730-day window:
+>
+> | City | Terra only | Terra + Aqua | |
+> |---|---|---|---|
+> | Addis Ababa | 414 | **715** | +73% |
+> | Delhi | 327 | **647** | +98% |
+> | Sao Paulo | 221 | **424** | +92% |
+> | Lagos | **65** | **199** | **+206%** |
+> | Jakarta | **88** | **146** | +66% |
+>
+> Lagos tripled — Aqua alone (134) beats Terra alone (65) there. The cross-city spread narrowed from 6.4× to 4.9×, which is better but **still not parity, so the `*_frac_*` columns remain mandatory for cross-city work**.
+>
+> **Terra was systematically missing the peak.** Its ~10:30 overpass never reaches the afternoon maximum. Aqua's maximum exceeded Terra's in *every* city, and the merged maximum equals the Aqua maximum everywhere — **Terra contributed no maximum at all**:
+>
+> | City | Terra max | Aqua max | gap |
+> |---|---|---|---|
+> | Sao Paulo | 37.9 | 46.1 | **+8.2** |
+> | Addis Ababa | 35.3 | 43.1 | **+7.8** |
+> | Delhi | 39.1 | 43.5 | +4.4 |
+> | Jakarta | 39.1 | 42.4 | +3.3 |
+> | Lagos | 37.1 | 39.7 | +2.6 |
+>
+> The shortfall was **uneven**, so Terra-only also misranked the cities: it put Delhi level with Jakarta and both above Sao Paulo, where the merged data puts Sao Paulo clearly second behind Delhi.
+>
+> **Two consequences for interpretation.** The exceedance columns were renamed `heat_days_gt*` → **`heat_obs_gt*`** (and `heat_nights_gt*` → `heat_nights_obs_gt*`) because they now count *observations*, not days. And `lst_mean_c` is now a mean over **two different times of day** rather than a consistent mid-morning mean — better sampled, but a slightly different construct. The `*_frac_*` columns are unaffected in meaning.
+>
+> **It did not fix the 662 blocks with no LST at all** (Lagos 554, Jakarta 108), which is unchanged. Zero recovery from doubling the observations implies those are *permanently* masked — water pixels, which MODIS LST excludes by design — rather than cloud-limited.
 
 **Processing:**
 
-1. **Temporal filtering:** The MODIS collection is filtered to a fixed 730-day window per city (see *The analysis window* above) — **not** to a per-business window. The stacked summary image is built once per city and sampled for every batch in that city. Businesses within a city therefore differ only by location, never by listing date.
+1. **Temporal filtering:** The merged Terra+Aqua collection is filtered to a fixed 730-day window per city (see *The analysis window* above) — **not** to a per-business window. The stacked summary image is built once per city and sampled for every batch in that city. Businesses within a city therefore differ only by location, never by listing date.
 
 2. **Unit conversion:** Raw MODIS LST_Day_1km values are stored as scaled integers in Kelvin (digital number × 0.02 = temperature in Kelvin). Each image is converted to Celsius: `(DN × 0.02) − 273.15`.
 
-3. **Threshold counts (`heat_days_gt{X}c`):** For each threshold (40, 45, 50°C), each daily image is converted to a binary mask (1 where LST > threshold, 0 otherwise). These binary images are summed across the time series to produce a count of exceedance days.
+3. **Threshold counts (`heat_obs_gt{X}c`):** For each threshold (40, 45, 50°C), each image in the merged Terra+Aqua collection is converted to a binary mask (1 where LST > threshold, 0 otherwise) and summed across the series. The result counts **exceeding observations, not exceeding days**.
 
 4. **Continuous summaries (`lst_mean_c`, `lst_max_c`):** The pixel-wise temporal mean and maximum are computed across all valid images in the window.
 
@@ -104,7 +136,7 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
 **Analytical notes:**
 
 - **Land Surface Temperature vs. Air Temperature:** LST measures the radiative temperature of the land surface, not the ambient air temperature. In urban areas with impervious surfaces, LST can be 10–20°C higher than air temperature measured at weather stations. LST is more relevant for characterising localised heat exposure of ground-level businesses and captures urban heat island variation within a city.
-- **Cloud bias — `heat_days_gt*` are NOT comparable across cities as raw counts.** These are counts of *clear-sky* exceedance days, and clear-sky coverage differs enormously by city. Observed in the 2026-08-26 run, out of 730 possible days:
+- **Cloud bias — `heat_obs_gt*` are NOT comparable across cities as raw counts.** These are counts of *clear-sky* exceedance days, and clear-sky coverage differs enormously by city. Observed in the 2026-08-26 run, out of 730 possible days:
 
   | City | mean `lst_valid_obs` | coverage |
   |---|---|---|
@@ -112,7 +144,7 @@ Fixed length matters because the `*_days_gt*` columns are **counts**. An earlier
   | Jakarta | 86 | 12% |
   | Lagos | 40 | 6% |
 
-  Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis's `0` means "0 of ~404". A 10x difference in denominator. **Normalise before comparing across cities** — `heat_days_gt40c / lst_valid_obs` gives the fraction of observed days exceeding the threshold. `lst_mean_c` and `lst_max_c` are unaffected by this (they are averages over whatever was observed), though `lst_max_c` is still biased low where coverage is sparse.
+  Lagos's `heat_obs_gt40c = 0` means "0 of ~40 observed days"; Addis's `0` means "0 of ~404". A 10x difference in denominator. **Normalise before comparing across cities** — `heat_obs_gt40c / lst_valid_obs` gives the fraction of observed days exceeding the threshold. `lst_mean_c` and `lst_max_c` are unaffected by this (they are averages over whatever was observed), though `lst_max_c` is still biased low where coverage is sparse.
 - **Resolution:** At 1km, multiple businesses within the same neighbourhood will share a MODIS pixel and receive identical values. This limits within-city spatial variation for this indicator.
 - **Overpass time:** The Terra satellite passes over at ~10:30 local solar time. This captures mid-morning surface temperature, which is typically lower than the afternoon peak. Values should not be interpreted as daily maximum air temperature.
 
@@ -947,17 +979,19 @@ A column of zeros would have been worse than no column: it reads as "no business
 
 Computed after the merge in `run_all.py` (`utils.add_exceedance_rates`) as pure client-side arithmetic on already-extracted columns. They are **not** in the per-indicator CSVs (`heat.csv`, `airquality.csv`) — only in `all_indicators.csv` — and are recomputed every run, so they cannot go stale.
 
-**Why they exist.** The `*_days_gt*` columns count exceedances *among days that were observed*, and cloud masking makes that denominator vary enormously. Over the same 730-day window:
+**Why they exist.** The raw count columns count exceedances *among observations that were actually made*, and cloud masking makes that denominator vary enormously. Over the same 730-day window:
 
 | City | `lst_valid_obs` | `aod_valid_obs` |
 |---|---|---|
-| Addis Ababa | 404 | 347 |
-| Delhi | 334 | **647** |
-| Sao Paulo | 235 | 357 |
-| Jakarta | 86 | 202 |
-| Lagos | 40 | 91 |
+| Addis Ababa | 711 | 347 |
+| Delhi | 668 | **647** |
+| Sao Paulo | 441 | 357 |
+| Jakarta | 149 | 201 |
+| Lagos | 127 | 90 |
 
-A 10x range for MODIS LST and a **7x range for AOD** — Delhi's dry, clear skies return more than seven times Lagos's valid AOD retrievals, so its raw `aod_days_gt*` counts dwarf every other city's for reasons that have nothing to do with air quality. Lagos's `heat_days_gt40c = 0` means "0 of ~40 observed days"; Addis Ababa's `0` means "0 of ~404".
+> `lst_valid_obs` roughly doubled on 2026-10-02 when Aqua was merged into indicator 2, so its ceiling is now ~1,460 rather than 730 and these figures are **not** comparable with ones quoted before that date. The spread narrowed from 10× to 5.6× — better, but nowhere near parity, so the rates remain necessary.
+
+A 10x range for MODIS LST and a **7x range for AOD** — Delhi's dry, clear skies return more than seven times Lagos's valid AOD retrievals, so its raw `aod_days_gt*` counts dwarf every other city's for reasons that have nothing to do with air quality. Lagos's `heat_obs_gt40c = 0` means "0 of ~40 observed days"; Addis Ababa's `0` means "0 of ~404".
 
 **This reverses conclusions, it does not merely adjust them.** Ranking the cities by air-pollution exceedance:
 
@@ -1053,7 +1087,7 @@ Observed in the 2026-08-26 three-city run (10,989 rows). Every other column is f
 | Column(s) | Missing | Cause |
 |---|---|---|
 | `jrc_recurrence` | 11,449 (99.8%) | JRC masks recurrence outside water bodies. Expected — see Indicator 3. |
-| `heat_days_gt40c`, `heat_days_gt45c`, `heat_days_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 25 (0.2%) | One MODIS pixel permanently masked. See below. |
+| `heat_obs_gt40c`, `heat_obs_gt45c`, `heat_obs_gt50c`, `lst_mean_c`, `lst_max_c`, `lst_valid_obs` | 25 (0.2%) | One MODIS pixel permanently masked. See below. |
 | `heat_frac_gt40c`, `heat_frac_gt45c`, `heat_frac_gt50c` | 25 (0.2%) | Derived from the masked heat columns above. |
 | `pop_density_50m` | 101 (0.9%) | WorldPop unmapped on the North Jakarta coast. See below. |
 | `pop_density_150m` | 28 (0.25%) | Same cause; the wider buffer recovers 73 of the 101. |

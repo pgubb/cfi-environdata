@@ -378,7 +378,34 @@ def load_manifest(config: dict) -> dict:
 
 
 def save_manifest(manifest: dict, config: dict):
-    _manifest_path(config).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    """Write the manifest, MERGING onto whatever is on disk now.
+
+    Deliberately not a plain overwrite. Callers load the manifest once at
+    startup and save it after every indicator, so a blind write puts back a
+    snapshot that may be minutes or hours stale and silently erases anything
+    another writer added in between.
+
+    That is not hypothetical: on 2026-10-02 the longitudinal pipeline's
+    freshly-seeded `long_*` fingerprints were wiped by a still-running
+    run_all_blocks.py saving its startup copy, which cost an unnecessary
+    full recompute of five indicators. It is the same family as the
+    2026-09-14 bug where the block pipeline wrote its manifest to the point
+    pipeline's path — concurrent writers clobbering each other's fingerprints,
+    and in both cases the symptom is a surprise recompute rather than an error.
+
+    Merge semantics mean an entry can be added or updated but never removed by
+    saving. Nothing in this repo deletes manifest entries, and a stale extra
+    entry is harmless — it is checked against a fingerprint before any reuse.
+    """
+    path = _manifest_path(config)
+    on_disk = {}
+    if path.exists():
+        try:
+            on_disk = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            on_disk = {}        # corrupt manifest: rebuild rather than fail
+    on_disk.update(manifest)
+    path.write_text(json.dumps(on_disk, indent=2, sort_keys=True))
 
 
 # --- Derived exceedance rates ---------------------------------------------
@@ -404,8 +431,11 @@ def save_manifest(manifest: dict, config: dict):
 # which silently produced the SAME name for heat_nights_gt* (no "_days_gt"
 # substring) and overwrote the counts with their own rates in place.
 RATE_DENOMINATORS = {
-    "heat_days_gt":   ("lst_valid_obs", "heat_frac_gt"),
-    "heat_nights_gt": ("lst_night_valid_obs", "heat_nights_frac_gt"),
+    # heat_obs_gt*/heat_nights_obs_gt* count OBSERVATIONS above the threshold,
+    # not days: indicator 2 reads Terra AND Aqua, so a date can contribute two.
+    # The rates are unchanged in meaning - a count over its own denominator.
+    "heat_obs_gt":        ("lst_valid_obs", "heat_frac_gt"),
+    "heat_nights_obs_gt": ("lst_night_valid_obs", "heat_nights_frac_gt"),
     "aod_days_gt":    ("aod_valid_obs", "aod_frac_gt"),
     # Dry days DO get fractions, unlike the heavy-rain counts. rain_valid_obs is
     # a constant 730, so the fraction is an exact rescale rather than a

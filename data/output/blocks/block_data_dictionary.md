@@ -18,7 +18,7 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `block_uid` | string | | City-prefixed id (`Lagos_1234`), unique across all cities. Convenience for single-key joins. |
 | `city` | string | | One of Addis Ababa, Delhi, Jakarta, Lagos, Sao Paulo. |
 | `slope_degrees` | float | degrees | Mean terrain slope (SRTM 30 m). Landslide proxy and runoff term. |
-| `lst_max_c` | float | °C | Maximum daytime land surface temperature over the window (MODIS 1 km). |
+| `lst_max_c` | float | °C | Maximum daytime land surface temperature over the window, **MODIS Terra + Aqua** 1 km. Values rose 2.4–8.0 °C when Aqua was merged in on 2026-10-02 — see below. |
 | `hand_m` | float | metres | Mean Height Above Nearest Drainage (MERIT Hydro ~90 m). Lower = more flood-susceptible. |
 | `canopy_fraction` | float | proportion (0–1) | Share of block area classified tree cover (ESA WorldCover 10 m). |
 | `builtup_fraction` | float | proportion (0–1) | Share of block area covered by built surface (GHSL 100 m). |
@@ -34,7 +34,7 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | Indicator | Addis Ababa | Delhi | Jakarta | Lagos | Sao Paulo |
 |---|---|---|---|---|---|
 | `slope_degrees` | 5.22 (2.84) | 3.30 (1.27) | 3.00 (1.56) | 2.73 (1.16) | **6.16 (2.85)** |
-| `lst_max_c` | 34.5 (1.8) | 41.5 (1.2) | 40.5 (1.2) | 34.8 (1.9) | 37.6 (2.3) |
+| `lst_max_c` | 42.5 (2.0) | 46.2 (1.5) | 42.9 (1.3) | 38.3 (2.3) | 44.7 (2.6) |
 | `hand_m` | 30.5 (27.5) | 2.6 (3.0) | 3.2 (3.1) | 2.1 (2.0) | 20.6 (16.3) |
 | `canopy_fraction` | 0.061 (0.126) | 0.146 (0.199) | 0.115 (0.164) | 0.053 (0.144) | 0.100 (0.158) |
 | `builtup_fraction` | 0.267 (0.132) | 0.355 (0.156) | 0.392 (0.103) | 0.359 (0.196) | **0.408 (0.109)** |
@@ -46,6 +46,14 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `heat_exposure_index` | -0.00 (0.64) | -0.00 (0.73) | 0.00 (0.73) | 0.00 (0.77) | -0.00 (0.80) |
 
 `hand_m` is the clearest discriminator: highland Addis Ababa sits 30 m above drainage on average against 2.1 m in coastal Lagos, 2.6 m in Delhi and 3.2 m in Jakarta, and it retains large *within*-city spread (Addis SD 27.5, range 0–276 m).
+
+> ### `lst_max_c` changed substantially on 2026-10-02
+>
+> Indicator 2 now reads **both** MODIS satellites (Terra ~10:30 local, Aqua ~13:30) rather than Terra alone. Terra's mid-morning overpass never reached the afternoon peak, so block values rose everywhere — Addis Ababa +8.0 °C, Sao Paulo +7.1, Delhi +4.7, Lagos +3.5, Jakarta +2.4 — and **the city ranking changed**: Sao Paulo moved from fourth to second, and Addis Ababa from last to near-level with Jakarta. Old and new values are not comparable.
+>
+> **It also made the column a much better map.** Within-city variance rose from 18% to **48%** at block level (31% at business points), because doubling the observations removes sampling noise that was swamping real spatial pattern. On the selection test below this moves `lst_max_c` out of the marginal "kept despite being coarse" tier on merit, though it is still a 1 km source over ~149 m blocks and should be read as a smooth surface.
+>
+> **The 662 blocks with no LST at all are unchanged** (Lagos 554, Jakarta 108). Zero recovery from doubling the observations implies they are *permanently* masked — water pixels, which MODIS LST excludes by design — not cloud-limited.
 
 **Delhi is the outlier on density and greenness.** Its `hrsl_density` mean of 62,084/km² is 2.7x the next city's and carries the widest spread (SD 41,778), and at 0.146 it has the highest `canopy_fraction` of the five — Delhi's grid includes substantial green space that the others' sampling frames do not.
 
@@ -71,7 +79,7 @@ The block set is a **subset** of the 13 run at business level, chosen on native 
 
 **Kept, fine-grained** (54–93% of variance is within-city): canopy and built-up 10 m, slope 30 m, buildings 0.5 m, HRSL 31 m, HAND 90 m, nightlights 500 m.
 
-**Kept despite being coarse**, because the hazard matters and nothing finer exists: `lst_max_c` (1 km, 19% within-city) and `no2_mean` (1.1 km, 13%). **Expect smooth surfaces from these two, not block-level detail.**
+**Kept despite being coarse**, because the hazard matters and nothing finer exists: `lst_max_c` (1 km, **31%** within-city since the Aqua merge, up from 19%) and `no2_mean` (1.1 km, 13%). **Expect smooth surfaces from these two, not block-level detail.**
 
 > ### These shares are a property of the city set, not of the data
 >
@@ -85,7 +93,7 @@ The block set is a **subset** of the 13 run at business level, chosen on native 
 > | HRSL | 86% | 60% | **59%** |
 > | Built-up | 47% | 57% | **59%** |
 > | HAND | 66% | 64% | **64%** |
-> | `lst_max_c` | 22% | 16% | **19%** |
+> | `lst_max_c` | 22% | 16% | **31%** |
 >
 > HAND is the only one that barely moves. **No indicator has changed side** across any frame, and the three tiers stay cleanly separated (54–93% / 13–19% / 0.4–6%), so the selection below still stands. But re-measure rather than quoting these after any change to the city set, and never compare a figure from one frame with a figure from another.
 
@@ -240,13 +248,28 @@ Rainfall swings **12 to 599 mm** across periods, AOD **0.27 to 0.82** with peaks
 
 **Resolution relative to a block.** Only `lst_max_c` (1km) approaches block scale; rainfall is 5.5km (~37 blocks wide) and ERA5 heat stress 11km (~74 blocks). **Read this table along the TIME axis**; use the static table for spatial pattern. ERA5 is nonetheless *not* constant within a city — 56–439 distinct values per city-period, with up to 2.47°C spread across Addis Ababa and 2.45°C across Sao Paulo, since its grid spans several cells and picks up elevation. Delhi has many distinct values (360–395) but the *smallest* spatial spread (0.38°C): many grid cells, all nearly identical, because the terrain is flat. Sao Paulo has both the most cells (385–439) and a large spread, being both big and hilly.
 
+> ### A period mean can rest on a single observation — check `lst_valid_obs`
+>
+> Even after the Aqua merge, Jakarta's wet season is badly undersampled, and the arithmetic does not warn you. Jakarta by period:
+>
+> | Period | Starts | blocks with a value | mean `lst_valid_obs` | `lst_max_c` |
+> |---|---|---|---|---|
+> | 9 | 2025-09-09 | 100% | 13.4 | 39.6 °C |
+> | 11 | 2025-12-08 | 18% | 1.16 | 32.1 °C |
+> | **12** | **2026-01-22** | **9%** | **1.00** | **13.5 °C** |
+> | 13 | 2026-03-08 | 100% | 5.25 | 37.9 °C |
+>
+> Period 12's 13.5 °C is not an error and not a cool month — it is **one observation per block through a cloud gap, in 9% of blocks**, and a single snapshot can easily catch an unrepresentative moment. A tropical city does not have a 13.5 °C maximum surface temperature.
+>
+> **Filter on `lst_valid_obs` before reading any period's LST**, and treat block-periods where it is 1–2 as a snapshot rather than a summary. The same caution applies to `aod_valid_obs`.
+
 **Reduction scale is capped at 100m** (`blocks_longitudinal.max_reduce_scale_m`). `reduceRegions` evaluates at the requested scale, so a scale coarser than the ~149m block returns NULL for every block: CHIRPS at 5,566m and ERA5 at 11,132m both produced entirely empty columns before this cap. Safe here because every metric is a mean or a per-pixel temporal statistic, never a `pixelArea`-derived density.
 
 **Missing values** (of 1,925,024 block-periods):
 
 | Column | Missing | Cause |
 |---|---|---|
-| `lst_max_c`, `lst_mean_c`, `lst_valid_obs` | 205,749 (11%) | **Seasonal cloud — and itself a signal.** Coverage falls to 77–82% in the cloudiest periods, recovering to 93–99% otherwise; Addis Ababa 100%, Sao Paulo 100%, Delhi 99%, Jakarta 65%, Lagos 62%. The overall rate has fallen 25% → 16% → 11% purely because the cities added were cloud-free — **the absolute count has not changed at all since Delhi, and Jakarta and Lagos have not improved by a single block-period**. Never read the headline rate as coverage getting better. `lst_valid_obs` makes this measurable rather than hidden. |
+| `lst_max_c`, `lst_mean_c`, `lst_valid_obs` | 138,764 (7%) | **Seasonal cloud — and itself a signal.** By city: Addis Ababa and Sao Paulo 100%, Delhi 99.9%, Lagos 89%, Jakarta 71%. **Merging Aqua into indicator 2 on 2026-10-02 cut this materially for the first time** — previously 205,749 (11%), with Lagos at 62% and Jakarta 65%. Lagos gained 27 percentage points, Jakarta 6. Before that the headline rate had only ever fallen because cloud-free cities were *added* while Jakarta and Lagos stood still; this is a real improvement rather than a compositional one. `lst_valid_obs` makes the remainder measurable rather than hidden. |
 | `aod_mean`, `aod_valid_obs` | 66,435 (3%) | Cloud screening on MAIAC retrievals, very unevenly: Lagos 9%, Jakarta 6%, Addis Ababa 5%, Delhi 3%, **Sao Paulo 0%** — the only city with complete AOD coverage. |
 | `wbgt_mean_c`, `rh_mean_pct` | 23,568 (3%) | 1,473 Lagos blocks x 16 periods, all on Lagos Island / Victoria Island / the lagoon, which ERA5-Land masks as water. A focal fill from neighbouring land recovers Jakarta entirely and most of Lagos, but not blocks this deep inside the lagoon. Purely spatial: the same blocks in every period. |
 | `no2_mean` | 1,182 (0.1%) | Sparse Sentinel-5P retrievals in a few block-periods (Jakarta 962, Sao Paulo 220). |

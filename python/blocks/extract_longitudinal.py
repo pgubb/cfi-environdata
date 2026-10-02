@@ -24,12 +24,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils import load_config, init_gee                             # noqa: E402
+from utils import (load_config, init_gee, indicator_fingerprint,    # noqa: E402
+                   load_manifest, save_manifest)
 from utils_blocks import (                                          # noqa: E402
     load_blocks, batch_blocks, save_block_output, safe_getinfo,
     load_checkpoint, append_checkpoint, clear_checkpoint,
 )
-from longitudinal_indicators import LONGITUDINAL_INDICATORS         # noqa: E402
+from longitudinal_indicators import (LONGITUDINAL_INDICATORS,
+                                     LONGITUDINAL_CONFIG_KEYS)         # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -158,24 +160,52 @@ def main():
     blocks = load_blocks(config)
     out_dir = REPO_ROOT / config["blocks"]["output_dir"]
 
+    # CACHE VALIDITY, as in run_all_blocks.py. Until 2026-10-02 this pipeline
+    # reused an output file on nothing but its existence and row count, so a
+    # change to how a column is COMPUTED left the stale values in place
+    # silently. That nearly shipped: merging Aqua into the heat builder would
+    # have updated the point and static-block tables while long_heat_blocks.csv
+    # kept Terra-only values under the same column names.
+    #
+    # Entries are keyed `long_<name>` in the BLOCK manifest rather than written
+    # to a file of their own, because the longitudinal indicators share their
+    # names with the static ones ("heat", "no2", ...) and would otherwise
+    # overwrite each other's fingerprints.
+    block_config = dict(config)
+    block_config["output_dir"] = config["blocks"]["output_dir"]
+    fingerprints = {n: indicator_fingerprint(n, config,
+                                             keys=LONGITUDINAL_CONFIG_KEYS[n])
+                    for n in LONGITUDINAL_INDICATORS}
+    manifest = load_manifest(block_config)
+
     frames, checkpoints = {}, {}
     for i, name in enumerate(wanted, 1):
         print(f"\n=== Longitudinal {i}/{len(wanted)}: {name} ===")
         path = out_dir / f"long_{name}_blocks.csv"
         expected = len(blocks) * len(periods)
-        if path.exists() and not args.force:
+        key = f"long_{name}"
+        stale = manifest.get(key, {}).get("fingerprint") != fingerprints[name]
+        if path.exists() and not args.force and stale:
+            print("  Cache invalid (config affecting this indicator changed) "
+                  "— recomputing")
+        if path.exists() and not args.force and not stale:
             cached = pd.read_csv(path, dtype={"block_id": str})
             if len(cached) == expected:
                 print(f"  Skipping: already has all {expected:,} "
                       f"block-periods (--force to recompute)")
                 frames[name] = cached
                 continue
-        if args.force:
+        if args.force or stale:
+            # Without this a stale checkpoint would be merged with freshly
+            # computed rows, mixing two definitions in one file.
             clear_checkpoint(f"long_{name}_blocks", config)
         frames[name], checkpoints[name] = extract_indicator(
             name, blocks, periods, config)
         save_block_output(frames[name], f"long_{name}_blocks", config)
         clear_checkpoint(checkpoints[name], config)   # only once safely saved
+        manifest[key] = {"fingerprint": fingerprints[name],
+                         "rows": int(len(frames[name]))}
+        save_manifest(manifest, block_config)
 
     if set(frames) != set(lon["indicators"]):
         print(f"\nRan {len(frames)} of {len(lon['indicators'])} indicators; "

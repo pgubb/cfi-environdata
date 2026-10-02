@@ -30,14 +30,26 @@ elevation:
 
 # ---------- Indicator 2: Extreme Heat Days ----------
 heat:
-  dataset: "MODIS/061/MOD11A1"
+  # BOTH MODIS SATELLITES, merged. Terra alone until 2026-10-02, which cost
+  # coverage and systematically missed the afternoon peak - see the measured
+  # figures in lst_collection() in extract_heat.py. Terra overpasses ~10:30 and
+  # ~22:30 local, Aqua ~13:30 and ~01:30, and both carry the same bands on the
+  # same grid, so merging needs no reconciliation.
+  datasets:
+    - "MODIS/061/MOD11A1"   # Terra
+    - "MODIS/061/MYD11A1"   # Aqua
   band: "LST_Day_1km"
   # MODIS LST is stored in Kelvin * 0.02 scale factor
   scale_factor: 0.02
   offset_kelvin_to_celsius: -273.15
   # Trailing window in years before each record's fieldwork_date
   trailing_years: 2
-  # Celsius thresholds for day-count indicators
+  # Celsius thresholds. These produce heat_obs_gt*c - counts of OBSERVATIONS
+  # above the threshold, not of days: with two satellites both can exceed it on
+  # the same date. They were heat_days_gt*c while Terra alone gave one
+  # observation per day. Use the derived heat_frac_gt* columns for any
+  # cross-city comparison, as before; those are counts over lst_valid_obs and
+  # their meaning is unchanged.
   thresholds_celsius: [40, 45, 50]
   # Also compute mean and max LST over the window
   compute_continuous: true
@@ -49,6 +61,14 @@ heat:
   # "Tropical night" thresholds (C). 20C and 25C are the common heat-health
   # cut-offs for nights offering no physiological recovery.
   night_thresholds_celsius: [20, 25]
+  # Cost is dominated by reducing the collection, not by the number of points,
+  # and merging Terra with Aqua doubled it to ~1,460 images per window. At the
+  # gee.batch_size default of 50 the merged indicator ran at ~1 point/s - a
+  # 5-hour pass. Same profile and same fix as rainfall, airquality, no2, wind,
+  # windgust, utci and heatstress. Performance-only, so excluded from the
+  # fingerprint.
+  batch_size: 500
+  getinfo_timeout_sec: 900
 
 # ---------- Indicator 3: Flood Vulnerability ----------
 flood:
@@ -676,8 +696,11 @@ blocks:
   #                        hand 90m (64%), builtup 10m (59%), hrsl 31m (59%),
   #                        nightlights 500m (54%)
   #   kept, coarse but conceptually necessary:
-  #                        lst_max_c 1km (19%), no2_mean 1.1km (13%) —
-  #                        expect smooth surfaces, not block-level detail
+  #                        lst_max_c 1km (31%, was 19% before Terra+Aqua -
+  #                        doubling the observations removed sampling noise
+  #                        that was swamping real spatial pattern),
+  #                        no2_mean 1.1km (13%) — expect smooth surfaces,
+  #                        not block-level detail
   #   dropped            : ERA5 heat stress 11km (0-3% within-city), CHIRPS
   #                        rainfall 5.5km (6%), night LST (2%), most AOD
   #                        (2%), elevation (0.4% — the between-city range
