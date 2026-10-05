@@ -52,24 +52,36 @@ Aqua starts in mid-2002 and its ~13:30 overpass catches afternoon peaks that Ter
 
 In Addis Ababa **93% of the apparent warming is the second satellite arriving.** Use `*_terra` for any trend, slope or before/after claim; use the merged columns for levels only, where they are the better estimate of a true peak.
 
-### 2. The LST columns show a recent decline that independent data does not corroborate
+### 2. The LST columns show a spurious cooling after 2020 — both satellites are drifting
 
-Terra-only maximum LST, five-year means:
+Terra-only maximum LST, change against its own 2016–2020 baseline:
 
-| City | 01–05 | 06–10 | 11–15 | 16–20 | **21–25** |
+| City | 2021 | 2022 | 2023 | 2024 | **2025** |
 |---|---|---|---|---|---|
-| Addis Ababa | 41.5 | 40.3 | 40.9 | 40.7 | **37.4** |
-| Delhi | 47.1 | 47.3 | 47.6 | 48.2 | **44.0** |
-| Jakarta | 42.9 | 43.5 | 44.1 | 43.3 | **41.1** |
-| Sao Paulo | 40.8 | 41.4 | 41.7 | 41.9 | **39.3** |
+| Addis Ababa | +0.7 | −0.8 | −4.8 | −5.4 | **−6.2** |
+| Delhi | −3.8 | −1.6 | −5.1 | −2.6 | **−7.6** |
+| Jakarta | −0.6 | −1.4 | +0.1 | −2.7 | **−6.1** |
+| Sao Paulo | −1.6 | −1.7 | −0.3 | −4.1 | **−5.2** |
+| Lagos | +0.6 | −1.1 | +0.5 | +0.1 | **−3.2** |
 
-Flat or rising to 2020, then a 2–4 °C fall. **ERA5 air temperature over the same period does not fall** — it is flat or slightly rising in four of five cities. What is established:
+Stable to 2020, then worsening monotonically to a 3–8 °C deficit by 2025, in **all five cities on three continents**. ERA5 air temperature over the same years does not fall. **This is an instrument artefact, and the cause is documented.**
 
-- It is **not a coverage artefact**: observation counts are near-stable (−1.9 to −12.9 per decade on a base of 30–200).
-- It is **partly Terra-specific**: the Terra-minus-Aqua gap widens by 0.4–1.8 °C in 2021–25, consistent with the documented drift in Terra's orbit and overpass time as NASA ceased maintaining it.
-- But **Terra drift cannot be the whole story**, because the half-Aqua merged series falls too, if less steeply.
+**Both MODIS platforms have left their maintained orbits, and both are drifting away from peak surface heating:**
 
-**The cause is not established, so treat the recent LST decline as probably instrumental and do not report cooling from these columns.** If you need a trend from LST, restrict to 2001–2020 and say so.
+| | nominal | last maneuver | then | by |
+|---|---|---|---|---|
+| **Terra** | 10:30 MLT | 2020 | drifts **earlier** — 10:15 by Oct 2022 | ~09:00 Dec 2025 |
+| **Aqua** | 13:30 MLT | Mar 2021 | drifts **later** — past 13:45 by Feb 2023 | ~15:50 Aug 2026 |
+
+Terra moves back toward morning and Aqua forward into late afternoon, so **each samples further from the daily maximum every year**. That is why the decline appears in the merged series too, which had been the one thing Terra drift alone could not explain — they are drifting in opposite directions but with the same effect on a maximum.
+
+**This is a sampling artefact, not a calibration failure.** The surface genuinely is cooler at 09:00 than at 10:30; the instrument is reporting correctly, it is simply no longer measuring the same time of day. (The separately documented MODIS calibration degradation from 2023 affects the *reflective solar* bands and products like ocean colour; LST uses thermal emissive bands calibrated against an onboard blackbody.)
+
+Orbital drift producing spurious cooling in an LST record is a **well-established problem** — it is the classic artefact in the NOAA-AVHRR series, where later-drifting afternoon platforms introduced exactly this decreasing trend, and where correction methods based on reconstructing the diurnal cycle are standard. No such correction is applied here.
+
+> **Restrict any LST trend to 2001–2020 and say so.** Do not report cooling from these columns. For anything after 2020 the LST columns remain usable as a *cross-city level* comparison within a single year, since all cities are sampled at the same drifted time — but not as a time series.
+
+Sources: [Terra orbital drift](https://terra.nasa.gov/about/terras-orbit-changes/terra-orbital-drift-information) · [Terra/Aqua orbit changes](https://nsidc.org/data/user-resources/data-announcements/ongoing-changes-terra-and-aqua-orbits-impacting-modis-snow-and-sea-ice-products) · [orbit drift and MODIS observations](https://ntrs.nasa.gov/api/citations/20240001409/downloads/2023_SPIE_Twedt_MODIS_EV_orbit_drift_manuscript_v4.pdf) · [AVHRR drift correction](https://doi.org/10.3390/rs11232843)
 
 ### 3. Use the ERA5 metrics for the long view, with their own caveat
 

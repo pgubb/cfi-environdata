@@ -37,6 +37,18 @@ So the LST metrics are emitted TWICE:
     (plain)   Terra+Aqua, 2003 onward — matches indicator 2, better absolute
               peaks, NOT a consistent series. Use for levels, not trends.
 
+AND A SECOND INSTRUMENT PROBLEM, AFTER 2020: BOTH PLATFORMS ARE DRIFTING.
+Terra's last maintaining maneuver was in 2020 and it now drifts EARLIER —
+10:15 MLT by Oct 2022, ~09:00 by Dec 2025. Aqua's was in Mar 2021 and it
+drifts LATER — past 13:45 by Feb 2023, ~15:50 by Aug 2026. They move in
+opposite directions but both AWAY FROM PEAK SURFACE HEATING, so maximum LST
+falls in the Terra-only AND the merged series alike: 3-8C below baseline by
+2025 in all five cities, while ERA5 air temperature does not fall. This is a
+SAMPLING artefact, not a calibration failure — the surface really is cooler at
+09:00, the instrument is simply no longer measuring the same time of day.
+Spurious cooling from orbital drift is the classic artefact of the NOAA-AVHRR
+record; no correction is applied here. RESTRICT ANY LST TREND TO 2001-2020.
+
 The ERA5 products have no equivalent break: both are reanalyses, internally
 consistent across their whole record by construction. They have the opposite
 caveat — they are MODELLED, so early decades rest on far less observational
