@@ -6,15 +6,18 @@ Remote-sensing environmental indicator extraction for the CFI MAP2 Round 2 study
 
 This utility takes GPS coordinates of listed businesses in **Sao Paulo, Addis Ababa, Delhi, Jakarta and Lagos** and extracts environmental indicators, mostly from [Google Earth Engine](https://earthengine.google.com/). Output is designed for merging with MAP2 survey and enumeration data for downstream analysis in R.
 
-There are **two pipelines**, producing three datasets:
+There are **three pipelines**, producing four datasets:
 
 | Pipeline | Output | Rows × cols | Unit of analysis |
 |---|---|---|---|
 | Point-level | `data/output/all_indicators.csv` | 24,497 × 122 | one listed business |
 | Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 17 | one sampling-grid block |
 | Block-level, longitudinal | `data/output/blocks/all_block_indicators_longitudinal.csv` | 1,925,024 × 18 | one block × 45-day period |
+| Yearly city panel | `data/output/heat_timeseries_yearly.csv` | see dictionary | one city × calendar year |
 
-The three are **different units of analysis and must not be merged into one another**. An indicator sharing a name across them is not the same quantity.
+The four are **different units of analysis and must not be merged into one another**. An indicator sharing a name across them is not the same quantity.
+
+Between them they answer different questions: the business and block tables say **where**, the longitudinal block table says **when within the two-year study window**, and the yearly panel says **when across the decades** — back to 1940 where the instrument allows.
 
 ## Indicators
 
@@ -110,6 +113,16 @@ cd python/blocks
 python3 run_all_blocks.py       # 10 static indicators + merge
 python3 extract_longitudinal.py # 6 indicators x 16 periods + merge
 ```
+
+### Yearly city panel
+
+```bash
+cd python
+python3 extract_heat_timeseries.py            # all cities, all groups
+python3 extract_heat_timeseries.py --cities Lagos --groups utci --last-year 1950
+```
+
+Ten heat metrics per city-year, each a spatial mean over that city's whole sampling grid, back as far as each instrument reaches. Unlike the other two pipelines this one has **no incremental cache** — it recomputes in full, taking roughly an hour and a half. See [`data/output/heat_timeseries_dictionary.md`](data/output/heat_timeseries_dictionary.md), and in particular why the LST metrics appear twice.
 
 Block polygons are read directly from the `cfi-map2-blockexplorer2026` repo, which must be checked out alongside this one.
 
