@@ -35,8 +35,8 @@ ROWS = [
      "Mean terrain slope across the block. A landslide-susceptibility proxy - the survey asks about clim_event_landslide - and a surface-runoff term for flooding. City means: Sao Paulo 6.2, Addis Ababa 5.2, Delhi 3.3, Jakarta 3.0, Lagos 2.7 degrees - Sao Paulo's hilly plateau makes it the steepest of the five. Elevation itself is deliberately NOT extracted at block level: it has only 0.4% within-city variance because the between-city range (Addis Ababa 2,300m vs Lagos 9m) swamps anything local, while slope from the same DEM has 84%."),
 
     ("lst_max_c", "Maximum land surface temperature (C)", "envblk_heat", "continuous",
-     "GEE: MODIS/061/MOD11A1, 1km | COARSE relative to a block",
-     "Highest daytime LAND SURFACE temperature in the block over a fixed 730-day window. Surface temperature, not air temperature: in built-up areas it runs 10-20C above what a weather station reports. AT 1km THIS IS COARSER THAN A BLOCK - one MODIS pixel spans roughly 44 blocks - so expect a smooth surface rather than block-to-block detail. It is retained because it is the only direct thermal measure with any within-city variance (19% on the five-city frame; it was 22% on three and 16% on four, moving each time the city set changed rather than because the data did); the humid-heat and night-heat variables have 0-3% and are business-level only."),
+     "GEE: MOD11A1 + MYD11A1 (Terra+Aqua), 1km | COARSE relative to a block",
+     "Highest daytime LAND SURFACE temperature in the block over a fixed 730-day window. Surface temperature, not air temperature: in built-up areas it runs 10-20C above what a weather station reports. AT 1km THIS IS COARSER THAN A BLOCK - one MODIS pixel spans roughly 44 blocks - so expect a smooth surface rather than block-to-block detail. MERGING MODIS AQUA INTO INDICATOR 2 ON 2026-10-02 CHANGED THIS COLUMN SUBSTANTIALLY and old values should not be compared with new. Terra's ~10:30 overpass never reached the afternoon peak, so block means rose 2.4-8.0C and the city ranking moved - Sao Paulo from fourth to second, Addis Ababa from last to near-level with Jakarta. It also stopped being a marginal inclusion: within-city variance went from 19% to 48% over blocks (31% at business points), because doubling the observations strips out sampling noise that was swamping real spatial pattern. Earlier figures of 22% on three cities and 16% on four moved with the city set rather than the data; this one moved because the data improved. The humid-heat and night-heat variables remain at 0-3% and are business-level only."),
 
     ("hand_m", "Height above nearest drainage (m)", "envblk_flood", "continuous",
      "GEE: MERIT/Hydro/v1_0_1, ~90m | the strongest block-level discriminator",
@@ -91,10 +91,10 @@ EXCLUDED_LONG = {
 
 ROWS_LONG = [
     ("lst_max_c", "Maximum land surface temperature (C)", "envlong_heat", "continuous",
-     "GEE: MODIS/061/MOD11A1, 1km | per 45-day period",
+     "GEE: MOD11A1 + MYD11A1 (Terra+Aqua), 1km | per 45-day period",
      "Highest daytime land surface temperature in the block during this period. Surface temperature, not air temperature. ~7% missing overall, which is SEASONAL CLOUD and itself informative. By city: Addis Ababa and Sao Paulo 100%, Delhi 99.9%, Lagos 89%, Jakarta 71%. MERGING AQUA INTO INDICATOR 2 ON 2026-10-02 CUT THIS FOR THE FIRST TIME - it was 11% overall with Lagos at 62% and Jakarta 65%, so Lagos gained 27 percentage points and Jakarta 6. Earlier falls in the headline rate (25% -> 16% -> 11%) were purely compositional, cloud-free cities being added while these two stood still; this one is real. A cross-city comparison is still partly a comparison of cloud. AND CHECK lst_valid_obs BEFORE READING ANY PERIOD: Jakarta's wet-season periods return a value for as few as 9% of blocks on a mean of ONE observation each, which produced a period mean of 13.5C - a single cloud-gap snapshot, not a cool month."),
     ("lst_mean_c", "Mean land surface temperature (C)", "envlong_heat", "continuous",
-     "GEE: MODIS/061/MOD11A1, 1km | per 45-day period",
+     "GEE: MOD11A1 + MYD11A1 (Terra+Aqua), 1km | per 45-day period",
      "Mean daytime land surface temperature in the block during this period. Same seasonal cloud gaps as lst_max_c."),
     ("lst_valid_obs", "Clear-sky observations", "envlong_heat", "continuous",
      "Diagnostic, but ALSO a seasonal signal",
