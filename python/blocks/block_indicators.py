@@ -30,12 +30,29 @@ from utils_blocks import get_analysis_window                    # noqa: E402
 
 
 def _terrain(config, bounds):
-    """Slope only. Elevation is deliberately excluded — measured at 0.4%
-    within-city variance, because the between-city range (Addis Ababa 2,300m
-    vs Lagos 9m) swamps anything local."""
+    """Elevation and slope, from one SRTM read.
+
+    ELEVATION WAS EXCLUDED UNTIL 2026-10-05, on the grounds that it has 0.4%
+    within-city variance because the between-city range (Addis Ababa 2,300m vs
+    Lagos 9m) swamps anything local. That reasoning is sound for the five-city
+    pooled statistic and WRONG as a reason to omit the column, because it is
+    not the question a coastal-flood map asks. Measured over the block grids of
+    the two coastal cities:
+
+        Jakarta   mean 17.7m, p10-p90 3-44m,  47.7% of blocks below 10m
+        Lagos     mean  5.6m, p10-p90 2-9m,   93.4% of blocks below 10m
+
+    Jakarta spans a real 3-44m gradient that the pooled figure hides entirely.
+    Elevation costs nothing extra here - slope already reads this image - so it
+    is emitted alongside, and coastal_lowland is derived from it after the
+    merge. Still near-useless for comparing CITIES; read it within one.
+    """
     srtm = ee.Image(config["elevation"]["dataset"]).select(
         config["elevation"]["band"])
-    return ee.Terrain.slope(srtm).rename("slope_degrees")
+    return ee.Image.cat([
+        srtm.rename("elevation_m"),
+        ee.Terrain.slope(srtm).rename("slope_degrees"),
+    ])
 
 
 def _heat(config, bounds):
@@ -130,7 +147,7 @@ LOCAL_RASTER_INDICATORS = {"pop2026"}
 
 # name -> (builder, output columns). Order is the run order.
 BLOCK_INDICATORS = {
-    "terrain":     (_terrain,     ["slope_degrees"]),
+    "terrain":     (_terrain,     ["elevation_m", "slope_degrees"]),
     "heat":        (_heat,        ["lst_max_c"]),
     "flood":       (_flood,       ["hand_m"]),
     "canopy":      (_canopy,      ["canopy_fraction"]),

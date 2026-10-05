@@ -11,7 +11,7 @@ There are **two pipelines**, producing three datasets:
 | Pipeline | Output | Rows × cols | Unit of analysis |
 |---|---|---|---|
 | Point-level | `data/output/all_indicators.csv` | 24,497 × 122 | one listed business |
-| Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 15 | one sampling-grid block |
+| Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 17 | one sampling-grid block |
 | Block-level, longitudinal | `data/output/blocks/all_block_indicators_longitudinal.csv` | 1,925,024 × 18 | one block × 45-day period |
 
 The three are **different units of analysis and must not be merged into one another**. An indicator sharing a name across them is not the same quantity.
@@ -57,7 +57,9 @@ Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), 
 
 ### Block level
 
-**Static (10 indicators):** terrain, heat, flood, canopy, built-up, nightlights, HRSL, buildings, NO₂, WorldPop 2026 — a deliberate **subset** of the point indicators, chosen on native resolution and measured within-city variance, because a block map can only show what varies between blocks.
+**Static (10 indicators):** terrain (elevation + slope), heat, flood, canopy, built-up, nightlights, HRSL, buildings, NO₂, WorldPop 2026 — a deliberate **subset** of the point indicators, chosen on native resolution and measured within-city variance, because a block map can only show what varies between blocks. Plus a derived `coastal_lowland` flag and a within-city `heat_exposure_index`.
+
+> **That selection test has one known failure mode.** A pooled within-city variance share is the right test for an indicator meant to vary *everywhere* and the wrong one for an indicator meant to vary *somewhere*. `elevation_m` was excluded on a 0.4% pooled share until 2026-10-05, when it turned out Jakarta's blocks span −9 to 82 m and the coastal flag derived from elevation splits them almost perfectly. Check the per-city picture before dropping anything on a pooled number.
 
 **Longitudinal (6 indicators × 16 periods of 45 days):** heat, rainfall, air quality, nightlights, heat stress, NO₂. Rainfall, ERA5 heat stress and AOD are *dropped* from the static table for low spatial variation and appear here for high temporal variation.
 

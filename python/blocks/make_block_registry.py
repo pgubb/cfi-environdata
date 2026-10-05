@@ -30,9 +30,17 @@ EXCLUDED = {
 
 # (id, label, domain, type, notes, description)
 ROWS = [
+    ("elevation_m", "Elevation (m)", "envblk_terrain", "continuous",
+     "GEE: USGS/SRTMGL1_003, 30m | read WITHIN a city, not across",
+     "Mean metres above sea level across the block. ADDED 2026-10-05, having been deliberately omitted until then on the grounds that elevation has 0.4% within-city variance - the between-city range (Addis Ababa 2,300m against Lagos 9m) swamps anything local. That statistic is correct and was the wrong reason to drop the column, because it answers a pooled question that no coastal-flood map asks. Within the two coastal cities the gradient is real: Jakarta's blocks run 3-44m between the 10th and 90th percentiles on a mean of 17.7m, Lagos's 2-9m on a mean of 5.6m. USE IT WITHIN A CITY AND NEVER ACROSS ONE - a cross-city comparison of this column is a comparison of where the cities sit, which is geography, not exposure. Prefer it to the binary coastal_lowland for mapping Jakarta, since a threshold discards exactly the gradient worth drawing. Costs nothing to extract: slope already reads this image."),
+
+    ("coastal_lowland", "Coastal lowland block", "envblk_flood", "binary",
+     "Derived: block mean elevation_m below flood.coastal_threshold_m, in a coastal city",
+     "Block mean elevation below 10 metres in a designated coastal city (Lagos or Jakarta) - the standard Low-Elevation Coastal Zone definition, a proxy for storm-surge and tidal exposure, and the block analogue of the business-level flag of the same name. IT DISCRIMINATES IN JAKARTA AND BARELY IN LAGOS: 47.7% of Jakarta blocks qualify, a near-maximal binary split (variance 0.2496 against a possible 0.25), while 93.4% of Lagos blocks do, which separates almost nothing - the same saturation that makes hand_m preferable to a threshold within Lagos. FALSE BY CONSTRUCTION in Addis Ababa, Delhi and Sao Paulo, so never read a zero there as a finding. NOT THE SAME QUANTITY AS THE BUSINESS-LEVEL FLAG: at a point it means that location is below 10m, here it means the block's MEAN is, which discards within-block spread and will disagree for blocks straddling the threshold. Derived after the merge from the same flood.coastal_threshold_m and flood.coastal_cities the point pipeline uses, so the two cannot drift on the definition - only on the geometry."),
+
     ("slope_degrees", "Terrain slope (degrees)", "envblk_terrain", "continuous",
      "GEE: ee.Terrain.slope on USGS/SRTMGL1_003, 30m",
-     "Mean terrain slope across the block. A landslide-susceptibility proxy - the survey asks about clim_event_landslide - and a surface-runoff term for flooding. City means: Sao Paulo 6.2, Addis Ababa 5.2, Delhi 3.3, Jakarta 3.0, Lagos 2.7 degrees - Sao Paulo's hilly plateau makes it the steepest of the five. Elevation itself is deliberately NOT extracted at block level: it has only 0.4% within-city variance because the between-city range (Addis Ababa 2,300m vs Lagos 9m) swamps anything local, while slope from the same DEM has 84%."),
+     "Mean terrain slope across the block. A landslide-susceptibility proxy - the survey asks about clim_event_landslide - and a surface-runoff term for flooding. City means: Sao Paulo 6.2, Addis Ababa 5.2, Delhi 3.3, Jakarta 3.0, Lagos 2.7 degrees - Sao Paulo's hilly plateau makes it the steepest of the five. Elevation from the same DEM is now extracted alongside (see elevation_m); it has only 0.4% within-city variance pooled across the five cities, against slope's 84%, which is why slope is the terrain variable to reach for first."),
 
     ("lst_max_c", "Maximum land surface temperature (C)", "envblk_heat", "continuous",
      "GEE: MOD11A1 + MYD11A1 (Terra+Aqua), 1km | COARSE relative to a block",

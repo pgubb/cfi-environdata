@@ -724,8 +724,15 @@ blocks:
   #                        not block-level detail
   #   dropped            : ERA5 heat stress 11km (0-3% within-city), CHIRPS
   #                        rainfall 5.5km (6%), night LST (2%), most AOD
-  #                        (2%), elevation (0.4% — the between-city range
-  #                        swamps anything local; slope from the same DEM is 84%)
+  #                        (2%)
+  #   RE-ADDED 2026-10-05 : elevation 30m. Its 0.4% pooled within-city share is
+  #                        real but was the wrong test - it is dominated by a
+  #                        2,300m between-city range and says nothing about the
+  #                        gradient inside a city. Jakarta's blocks span -9 to
+  #                        82m, and coastal_lowland derived from it splits them
+  #                        46/54 (binary variance 0.2487 of a possible 0.25).
+  #                        Slope from the same DEM is 84% and remains the
+  #                        terrain variable to reach for first.
   #   added 2026-09-21: pop2026, WorldPop R2025A at 100m. Included on the same
   #                     test as the rest — see the coverage note in the block
   #                     data dictionary for its measured within-city variance.

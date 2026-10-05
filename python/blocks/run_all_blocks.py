@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import ee
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -253,6 +254,7 @@ def main():
                 f"{len(merged):,}; its block_id values are not unique.")
 
     merged = add_block_heat_index(merged, config)
+    merged = add_block_coastal_lowland(merged, config)
     lead = ["block_id", "block_uid", "city"]
     merged = merged[lead + [c for c in merged.columns if c not in lead]]
     save_block_output(merged, "all_block_indicators", config)
@@ -264,6 +266,48 @@ def main():
         print("Columns with missing values:")
         print(missing.to_string())
     print("\nAll done.")
+
+
+def add_block_coastal_lowland(merged, config):
+    """Add `coastal_lowland`: block mean elevation below the LECZ threshold,
+    in a designated coastal city.
+
+    The block analogue of the business-level flag, derived after the merge from
+    `elevation_m` so it cannot drift from the threshold the point pipeline uses
+    — both read flood.coastal_threshold_m and flood.coastal_cities.
+
+    NOT QUITE THE SAME QUANTITY AS THE BUSINESS-LEVEL FLAG. At a point it means
+    "this location is below 10m". Over a ~149m block it means "the block's MEAN
+    elevation is below 10m", which discards the within-block spread and will
+    disagree with the point flag for blocks straddling the threshold. The two
+    frames are not interchangeable here, as everywhere else in this pipeline.
+
+    IT IS INFORMATIVE IN JAKARTA AND BARELY IN LAGOS. Measured on the block
+    grids: Jakarta 47.7% of blocks below 10m, a near-maximal binary split
+    (variance 0.2496 of a possible 0.25) across a real 3-44m gradient; Lagos
+    93.4%, which separates almost nothing — the same saturation that makes
+    hand_flood_vulnerable a poor within-Lagos discriminator. FALSE by
+    construction in the three inland cities, so never read it as a finding
+    there. For mapping Jakarta's coastal exposure prefer the continuous
+    elevation_m, which keeps the gradient a threshold throws away.
+    """
+    cfg = config.get("flood", {}) or {}
+    cities = cfg.get("coastal_cities") or []
+    thr = cfg.get("coastal_threshold_m")
+    if not cities or thr is None or "elevation_m" not in merged.columns:
+        print("  ! coastal_lowland skipped; needs flood.coastal_cities, "
+              "flood.coastal_threshold_m and an elevation_m column")
+        return merged
+
+    out = merged.copy()
+    coastal = out["city"].isin(cities)
+    low = out["elevation_m"] < float(thr)
+    # NaN elevation in a coastal city is unknown, not false; outside the
+    # coastal cities the flag is 0 by definition regardless of elevation.
+    out["coastal_lowland"] = pd.Series(
+        np.where(~coastal, 0, np.where(out["elevation_m"].isna(), pd.NA, low.astype(object))),
+        index=out.index).astype("Int64")
+    return out
 
 
 def add_block_heat_index(merged, config):

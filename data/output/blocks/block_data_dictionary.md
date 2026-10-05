@@ -2,7 +2,7 @@
 
 Zonal statistics over the **sampling-grid block polygons**, for mapping environmental indicators across a whole city. One row per block. Produced by `python/blocks/run_all_blocks.py`.
 
-**Last generated:** 2026-10-02 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame. Since then two indicators changed: `pop2026_density` was added on 2026-09-21, and `lst_max_c` was recomputed on 2026-10-02 when MODIS Aqua was merged into indicator 2 — see the note on that below, because its values and city ranking both moved. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
+**Last generated:** 2026-10-05 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame. Since then two indicators changed: `pop2026_density` was added on 2026-09-21, and `lst_max_c` was recomputed on 2026-10-02 when MODIS Aqua was merged into indicator 2 — see the note on that below, because its values and city ranking both moved. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
 
 **Relationship to the business-level dataset.** Same GEE sources, same builders, same analysis window — `python/blocks/block_indicators.py` calls the point pipeline's image builders directly rather than reimplementing them, so the two cannot drift. What differs is the geometry: a zonal mean over the block polygon instead of a buffer around a point.
 
@@ -17,7 +17,9 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `block_id` | string | | **RAW grid id**, matching `final_sampling_grid_2026.geojson` and `enum_data`'s `BlockID`. **Not unique on its own** — ids restart at 1 in every city. |
 | `block_uid` | string | | City-prefixed id (`Lagos_1234`), unique across all cities. Convenience for single-key joins. |
 | `city` | string | | One of Addis Ababa, Delhi, Jakarta, Lagos, Sao Paulo. |
+| `elevation_m` | float | metres | Mean metres above sea level (SRTM 30 m). **Read within a city, never across one** — see below. |
 | `slope_degrees` | float | degrees | Mean terrain slope (SRTM 30 m). Landslide proxy and runoff term. |
+| `coastal_lowland` | integer | binary (0/1) | **Derived.** 1 where block mean `elevation_m` < 10 m in a coastal city (Lagos, Jakarta); 0 elsewhere by construction. |
 | `lst_max_c` | float | °C | Maximum daytime land surface temperature over the window, **MODIS Terra + Aqua** 1 km. Values rose 2.4–8.0 °C when Aqua was merged in on 2026-10-02 — see below. |
 | `hand_m` | float | metres | Mean Height Above Nearest Drainage (MERIT Hydro ~90 m). Lower = more flood-susceptible. |
 | `canopy_fraction` | float | proportion (0–1) | Share of block area classified tree cover (ESA WorldCover 10 m). |
@@ -34,6 +36,8 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | Indicator | Addis Ababa | Delhi | Jakarta | Lagos | Sao Paulo |
 |---|---|---|---|---|---|
 | `slope_degrees` | 5.22 (2.84) | 3.30 (1.27) | 3.00 (1.56) | 2.73 (1.16) | **6.16 (2.85)** |
+| `elevation_m` | 2,345.9 (144.0) | 220.4 (14.8) | 18.2 (17.1) | 5.6 (3.0) | 773.2 (29.5) |
+| `coastal_lowland` | 0.000 | 0.000 | **0.464** | **0.930** | 0.000 |
 | `lst_max_c` | 42.5 (2.0) | 46.2 (1.5) | 42.9 (1.3) | 38.3 (2.3) | 44.7 (2.6) |
 | `hand_m` | 30.5 (27.5) | 2.6 (3.0) | 3.2 (3.1) | 2.1 (2.0) | 20.6 (16.3) |
 | `canopy_fraction` | 0.061 (0.126) | 0.146 (0.199) | 0.115 (0.164) | 0.053 (0.144) | 0.100 (0.158) |
@@ -46,6 +50,25 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `heat_exposure_index` | -0.00 (0.64) | -0.00 (0.73) | 0.00 (0.73) | 0.00 (0.77) | -0.00 (0.80) |
 
 `hand_m` is the clearest discriminator: highland Addis Ababa sits 30 m above drainage on average against 2.1 m in coastal Lagos, 2.6 m in Delhi and 3.2 m in Jakarta, and it retains large *within*-city spread (Addis SD 27.5, range 0–276 m).
+
+> ### Elevation was added on 2026-10-05, and the reason it was once excluded was the wrong reason
+>
+> `elevation_m` was deliberately omitted from this table because it has **0.4% within-city variance** — the between-city range (Addis Ababa 2,345 m against Lagos 6 m) swamps anything local. That statistic is correct, and it was the wrong basis for dropping the column: it answers a pooled question that no coastal-flood map asks.
+>
+> Inside the two coastal cities the gradient is real:
+>
+> | City | mean | min–max | blocks below 10 m |
+> |---|---|---|---|
+> | Jakarta | 18.2 m | **−9.0 to 82.1** | **46.4%** |
+> | Lagos | 5.6 m | −2.7 to 24.0 | 93.0% |
+>
+> **`coastal_lowland` is near-perfectly discriminating in Jakarta and nearly useless in Lagos.** Jakarta's 46.4% split gives a binary variance of **0.2487 against a theoretical maximum of 0.25**; Lagos's 93.0% separates almost nobody — the same saturation that makes `hand_m` preferable to a threshold there. It is **0 by construction** in Addis Ababa, Delhi and Sao Paulo, so a zero in those cities is a definition, not a finding.
+>
+> **Jakarta's negative minimum is real, not an artefact.** −9.0 m reflects North Jakarta's well-documented land subsidence, parts of which now sit below sea level. Treat it as signal.
+>
+> **For mapping Jakarta, prefer the continuous `elevation_m`** — the binary discards exactly the 3–44 m gradient worth drawing. The same argument the point dictionary makes for `hand_m` over `hand_flood_vulnerable`.
+>
+> **This is not the same quantity as the business-level `coastal_lowland`.** At a point it means that location is below 10 m; here it means the block's *mean* is, which discards within-block spread and will disagree for blocks straddling the threshold. Both read the same `flood.coastal_threshold_m` and `flood.coastal_cities`, so they cannot drift on the definition — only on the geometry.
 
 > ### `lst_max_c` changed substantially on 2026-10-02
 >
@@ -105,9 +128,10 @@ The block set is a **subset** of the 13 run at business level, chosen on native 
 | CHIRPS rainfall | 5.5 km | 6% |
 | Night LST, `heat_nights_*` | 1 km | 2% |
 | Most AOD columns | 1 km | 2% |
-| `elevation_m` | 30 m | **0.4%** |
 
-Elevation is the instructive case: fine resolution but almost no *within*-city variance, because the between-city range (Addis Ababa 2,300 m vs Lagos 9 m) swamps anything local. `slope_degrees`, from the same DEM, has 84%. Use the business-level dataset for the dropped indicators — they remain excellent for comparing cities, just not for mapping within one.
+Use the business-level dataset for the dropped indicators — they remain excellent for comparing cities, just not for mapping within one.
+
+> **`elevation_m` used to be on this list, at 0.4%, and was added in 2026-10-05.** It is the instructive case, but not in the way the list implied. The 0.4% is real and pooled across five cities whose elevations differ by 2,300 m; it says nothing about the gradient *inside* a city, which is the only thing a block map shows. Jakarta's blocks span −9 to 82 m. **A pooled variance share is the right test for an indicator meant to vary everywhere and the wrong test for one meant to vary somewhere** — which is why `coastal_lowland`, derived from it, reaches a near-maximal binary split in Jakarta while being flat in three cities by construction. `slope_degrees` from the same DEM has 84% and remains the terrain variable to reach for first.
 
 ---
 
