@@ -469,6 +469,23 @@ wind:
   batch_size: 1000
   getinfo_timeout_sec: 600
 
+# ---------- Yearly city heat panel (extract_heat_timeseries.py) ----------
+heat_timeseries:
+  # Settings for the city x year panel ONLY. Deliberately not folded into the
+  # `heat` section: that is hashed into indicator 2's fingerprint, and adding a
+  # key there would force a pointless 26-minute recompute of a column whose
+  # values would not change.
+  #
+  # Local solar overpass time, scale factor 0.1 -> hours. This is the
+  # diagnostic for the orbital-drift artefact: both MODIS platforms have left
+  # their maintained orbits and drift away from peak surface heating, so a
+  # falling LST can be the clock rather than the climate. Measured at Delhi,
+  # Terra held 10.8h from 2005 to 2021 and reached 9.7h by 2025 while Aqua went
+  # 13.2h to 14.3h - the sampling window stretching from 2.4 to 4.6 hours.
+  view_time_bands:
+    day: "Day_view_time"
+    night: "Night_view_time"
+
 # ---------- Indicator 17: UTCI and mean radiant temperature (ERA5-HEAT) ----------
 utci:
   # COMPLEMENT TO INDICATOR 11, not a replacement. wbgt_* stays as the

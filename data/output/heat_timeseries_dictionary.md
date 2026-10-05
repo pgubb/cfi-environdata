@@ -2,7 +2,7 @@
 
 Yearly heat metrics per city, each value a **spatial mean over that city's entire sampling grid**. Produced by `python/extract_heat_timeseries.py`.
 
-**Last generated:** 2026-10-05 — **430 rows**, 5 cities × 1940–2025, 19 columns.
+**Last generated:** 2026-10-05 — **430 rows**, 5 cities × 1940–2025, 23 columns.
 
 A **third unit of analysis**, alongside the business and block tables. It answers *when across decades*; the block tables answer *where* and *when within the two-year study window*. The three must not be merged into one another.
 
@@ -27,8 +27,10 @@ A **third unit of analysis**, alongside the business and block tables. It answer
 | `lst_max_c_terra` | 2001– | °C | Highest daytime LST. **Terra only.** |
 | `lst_nights_frac_gt25c_terra` | 2001– | 0–1 | Share of observed nights above 25 °C. **Terra only.** |
 | `lst_day_obs_terra`, `lst_night_obs_terra` | 2001– | count | Clear-sky observations behind the two shares. |
+| `lst_day_view_time_terra`, `lst_night_view_time_terra` | 2001– | local solar hours | **Mean overpass time.** The drift diagnostic — see below. |
 | `lst_frac_gt40c`, `lst_max_c`, `lst_nights_frac_gt25c` | 2003– | — | As above, **Terra + Aqua**. |
 | `lst_day_obs`, `lst_night_obs` | 2003– | count | Observations behind the merged shares. |
+| `lst_day_view_time`, `lst_night_view_time` | 2003– | local solar hours | Mean overpass time across **both** satellites. |
 
 Each metric is formed **per pixel and then averaged over the grid**. The other order — pooling exceedances and observations across the city first — would weight each pixel by how often it happened to be cloud-free.
 
@@ -74,6 +76,18 @@ Stable to 2020, then worsening monotonically to a 3–8 °C deficit by 2025, in 
 | **Aqua** | 13:30 MLT | Mar 2021 | drifts **later** — past 13:45 by Feb 2023 | ~15:50 Aug 2026 |
 
 Terra moves back toward morning and Aqua forward into late afternoon, so **each samples further from the daily maximum every year**. That is why the decline appears in the merged series too, which had been the one thing Terra drift alone could not explain — they are drifting in opposite directions but with the same effect on a maximum.
+
+**The drift is in this table, so you can check it rather than take it on trust.** `lst_day_view_time_terra` is the mean local solar hour of the Terra observations behind each row:
+
+| year | Addis Ababa | Delhi | Jakarta | Lagos | Sao Paulo |
+|---|---|---|---|---|---|
+| 2005 | 10.54 | 10.80 | 10.38 | 10.55 | 10.25 |
+| 2015 | 10.59 | 10.85 | 10.42 | 10.58 | 10.32 |
+| 2020 | 10.57 | 10.83 | 10.40 | 10.60 | 10.32 |
+| 2023 | 10.17 | 10.43 | 9.93 | 10.12 | 9.87 |
+| **2025** | **9.41** | **9.71** | **9.33** | **9.51** | **9.23** |
+
+Flat for fifteen years, then −1.1 h in five. Dividing each city's LST deficit by its own drift gives an implied sensitivity of **3.0 to 6.8 °C per hour earlier**, and the ordering is physically right — steepest in hot, dry, clear Delhi (6.8) where the morning surface warms fastest, shallowest in humid, cloudy Lagos (3.0). A spurious trend would not order itself by climate.
 
 **This is a sampling artefact, not a calibration failure.** The surface genuinely is cooler at 09:00 than at 10:30; the instrument is reporting correctly, it is simply no longer measuring the same time of day. (The separately documented MODIS calibration degradation from 2023 affects the *reflective solar* bands and products like ocean colour; LST uses thermal emissive bands calibrated against an onboard blackbody.)
 
@@ -124,5 +138,9 @@ Note Delhi rises on *counts* while its *maximum* falls slightly — a maximum an
 **Reduction scale is 1 km for every group**, including the 11 km and 28 km products. The Lagos grid is ~200 km², smaller than a single 28 km cell, and reducing coarser than the geometry risks returning nothing — the hazard that left whole columns empty in the block pipeline. Sampling a coarse product finely only repeats cell values; it is safe here because every metric is a mean or a per-pixel count, never a `pixelArea`-derived density.
 
 **No incremental cache.** Unlike the other pipelines this recomputes in full, about 90 minutes. There is no fingerprint, so a change to the code or config will not invalidate anything — regenerate deliberately.
+
+**A partial run merges rather than overwrites.** `--groups` or `--cities` recomputes only what is asked for and joins it onto the existing file on `(city, year)`; recomputed columns replace their old values and untouched groups survive. Without that, `--groups lst_terra` would silently drop every UTCI and ERA5 column. The LST groups alone take about 15 minutes against 90 for everything.
+
+**Corrections for the drift exist but none is applied here.** The standard approach is diurnal-temperature-cycle normalisation — model the daily LST curve, then restate every observation at a fixed reference hour — developed for the NOAA-AVHRR record where this artefact is canonical. Note that MODIS **Collection 7 will not fix it**: that reprocessing targets calibration and geolocation as the orbits change, not time-of-day sampling, and a correctly calibrated 09:00 measurement is still a 09:00 measurement. If the post-2020 years ever matter, the widening Terra–Aqua spread (2.4 h in 2020, 4.6 h by 2025) is itself the input a two-observation DTC fit needs, and the `*_view_time*` columns carry the hour. It would want validating against ERA5 skin temperature before being trusted.
 
 **No coastal fill** is applied to ERA5-Land here, unlike indicators 11 and 15. The spatial mean uses whatever land cells the grid overlaps, which is the natural reading of "average across the sampling grid"; a few Lagos lagoon cells are simply excluded.

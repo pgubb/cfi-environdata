@@ -56,6 +56,7 @@ input than recent ones even though the series looks seamless.
 """
 
 import argparse
+from pathlib import Path
 
 import ee
 import pandas as pd
@@ -116,6 +117,20 @@ def _lst_metrics(year, datasets, suffix, config):
 
     day = band(hc["band"])
     night = band(hc["night_band"])
+
+    # OVERPASS TIME, the diagnostic for the orbital-drift artefact documented in
+    # the dictionary. Both platforms have left their maintained orbits and drift
+    # away from peak heating, so a falling LST here can be the clock rather than
+    # the climate. Carrying the hour makes that checkable instead of merely
+    # asserted: at Delhi, Terra sat at 10.8h from 2005 to 2021 and reached 9.7h
+    # by 2025. Scale factor 0.1 gives local solar hours.
+    vt = config["heat_timeseries"]["view_time_bands"]
+    def view(name):
+        merged = None
+        for ds in datasets:
+            c = ee.ImageCollection(ds).filterDate(start, end).select(name)
+            merged = c if merged is None else merged.merge(c)
+        return merged.mean().multiply(0.1)
     # Fractions are formed PER PIXEL and then averaged over the grid. The other
     # order — summing exceedances and observations across the city first — would
     # weight each pixel by how often it happened to be cloud-free.
@@ -127,6 +142,8 @@ def _lst_metrics(year, datasets, suffix, config):
              .rename(f"lst_nights_frac_gt25c{suffix}"),
         day.count().rename(f"lst_day_obs{suffix}"),
         night.count().rename(f"lst_night_obs{suffix}"),
+        view(vt["day"]).rename(f"lst_day_view_time{suffix}"),
+        view(vt["night"]).rename(f"lst_night_view_time{suffix}"),
     ])
 
 
@@ -245,8 +262,26 @@ def main():
         frames.append(per_city)
 
     out = pd.concat(frames, ignore_index=True).sort_values(["city", "year"])
+
+    # A PARTIAL RUN MUST NOT DISCARD THE GROUPS IT DID NOT COMPUTE. Writing
+    # `out` straight out would silently drop every column from an unrequested
+    # group — the same trap run_all_blocks.py guards against by refusing to
+    # merge a partial set. Here the join key (city, year) is exact, so the
+    # better answer is to merge rather than refuse: recomputed columns replace
+    # their old values, untouched groups survive.
+    partial = set(groups) != set(GROUPS) or args.cities
+    existing = (Path(__file__).resolve().parent.parent
+                / config["output_dir"] / f"{OUTPUT_NAME}.csv")
+    if partial and existing.exists():
+        prev = pd.read_csv(existing)
+        keep = [c for c in prev.columns
+                if c in ("city", "year") or c not in out.columns]
+        out = prev[keep].merge(out, on=["city", "year"], how="outer")
+        print(f"  merged into the existing {len(prev):,}-row file "
+              f"(recomputed: {', '.join(groups)})")
+
     lead = ["city", "year"]
-    out = out[lead + [c for c in out.columns if c not in lead]]
+    out = out[lead + [c for c in out.columns if c not in lead]].sort_values(lead)
     save_output(out, OUTPUT_NAME, config)
     print(f"\n{len(out):,} city-years, {out.year.min()}-{out.year.max()}")
 
