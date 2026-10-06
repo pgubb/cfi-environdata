@@ -2,7 +2,7 @@
 
 Zonal statistics over the **sampling-grid block polygons**, for mapping environmental indicators across a whole city. One row per block. Produced by `python/blocks/run_all_blocks.py`.
 
-**Last generated:** 2026-10-05 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame. Since then two indicators changed: `pop2026_density` was added on 2026-09-21, and `lst_max_c` was recomputed on 2026-10-02 when MODIS Aqua was merged into indicator 2 — see the note on that below, because its values and city ranking both moved. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
+**Last generated:** 2026-10-06 — **120,314 blocks across all five cities**: Sao Paulo (38,017), Delhi (30,880), Jakarta (26,293), Addis Ababa (15,842) and Lagos (9,282). Sao Paulo was added on 2026-09-14, completing the frame. Since then two indicators changed: `pop2026_density` was added on 2026-09-21, and `lst_max_c` was recomputed on 2026-10-02 when MODIS Aqua was merged into indicator 2 — see the note on that below, because its values and city ranking both moved. Blocks are the full sampling grid, not the ~100 per city flagged `in_final_sample` — a citywide map needs the grid. Median block area ~22,000 m² (roughly 150 m square).
 
 **Relationship to the business-level dataset.** Same GEE sources, same builders, same analysis window — `python/blocks/block_indicators.py` calls the point pipeline's image builders directly rather than reimplementing them, so the two cannot drift. What differs is the geometry: a zonal mean over the block polygon instead of a buffer around a point.
 
@@ -24,6 +24,8 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `hand_m` | float | metres | Mean Height Above Nearest Drainage (MERIT Hydro ~90 m). Lower = more flood-susceptible. |
 | `canopy_fraction` | float | proportion (0–1) | Share of block area classified tree cover (ESA WorldCover 10 m). |
 | `builtup_fraction` | float | proportion (0–1) | Share of block area covered by built surface (GHSL 100 m). |
+| `albedo_wsa` | float | 0–1 | **White-sky** shortwave albedo (MODIS MCD43A3, 463 m) — see below. |
+| `albedo_bsa` | float | 0–1 | **Black-sky** shortwave albedo. Do not use alongside `albedo_wsa`. |
 | `ntl_mean_radiance` | float | nW/cm²/sr | Mean nighttime radiance over the trailing 12 months (VIIRS 500 m). |
 | `hrsl_density` | float | people per km² | Mean population density (Meta HRSL ~31 m). |
 | `pop2026_density` | float | people per km² | Mean population density, **year 2026** (WorldPop Global2 R2025A, 100 m constrained). Read from a local raster, not GEE. |
@@ -47,9 +49,23 @@ Zonal statistics over the **sampling-grid block polygons**, for mapping environm
 | `pop2026_density` | 12,727 (7,262) | 26,963 (9,681) | 18,742 (7,768) | 8,588 (6,818) | 13,602 (6,168) |
 | `building_height_mean` | 7.5 (4.9) | 8.7 (4.6) | 8.0 (6.1) | 6.4 (3.7) | **10.3 (8.5)** |
 | `no2_mean` | 39.2 (13.3) | 110.6 (19.6) | 122.7 (22.8) | 55.5 (14.5) | **144.2 (25.7)** |
+| `albedo_wsa` | 0.139 (0.013) | 0.145 (0.009) | 0.124 (0.014) | 0.125 (0.017) | 0.140 (0.009) |
+| `albedo_bsa` | 0.127 (0.011) | 0.134 (0.009) | 0.115 (0.013) | 0.117 (0.015) | 0.128 (0.009) |
 | `heat_exposure_index` | -0.00 (0.64) | -0.00 (0.73) | 0.00 (0.73) | 0.00 (0.77) | -0.00 (0.80) |
 
 `hand_m` is the clearest discriminator: highland Addis Ababa sits 30 m above drainage on average against 2.1 m in coastal Lagos, 2.6 m in Delhi and 3.2 m in Jakarta, and it retains large *within*-city spread (Addis SD 27.5, range 0–276 m).
+
+> ### Albedo: a 463 m product that maps better than most of the fine ones
+>
+> `albedo_wsa` reaches **66% within-city variance** — above `builtup_fraction` (57%) and `hrsl_density` (59%), and far above `lst_max_c` (31%) despite being coarser than it. Not a fluke of resolution but of distribution: the five city means sit between **0.124 and 0.145**, so there is almost no between-city term for a pooled share to be swallowed by. Every one of these cities is dark, absorbing 86–88% of incident sunlight, and what differs is local.
+>
+> This is the exact mirror of `elevation_m` immediately below — spatially fine but pooled-flat because its between-city range is enormous. **Together the two are the clearest statement of why a pooled variance share tests the city set as much as the indicator.**
+>
+> **⚠ Albedo is not behaving as a cooling proxy here.** Within city across the full grid it correlates **positively** with maximum LST, r = **+0.38** — the opposite of the naive expectation that a brighter surface runs cooler. The likely reason is that the brightest surfaces in these cities are bare soil rather than pale roofs, and bare ground is both bright and hot: no evaporative cooling, low thermal inertia. Test it before relying on it, and do not sign a negative coefficient on physical intuition.
+>
+> It is otherwise near-orthogonal to the rest of the table (canopy −0.18, elevation −0.19, nightlights −0.16, built-up −0.01), so it adds information rather than restating any of it.
+>
+> **It must be reduced finer than native.** At 463 m against ~149 m blocks `reduceRegions` returns NULL for *every* block — verified, not theorised — so the scale is capped at 100 m, safe because this is a plain mean with no `pixelArea` term.
 
 > ### Elevation was added on 2026-10-05, and the reason it was once excluded was the wrong reason
 >
@@ -166,6 +182,7 @@ The quantisation row is the decisive one for a map: HRSL allocates uniformly wit
 | `hrsl_density` | 1,576 | outside product coverage (Delhi 782, Addis Ababa 267, Sao Paulo 254, Lagos 192, Jakarta 81) |
 | `building_height_mean` | 812 | no buildings detected in the block (Delhi 317, Lagos 216, Sao Paulo 119, Jakarta 105, Addis Ababa 55) |
 | `pop2026_density` | 41 | block contains no populated cell (Lagos 36, Delhi 5) — the best coverage of the three population layers |
+| `albedo_wsa`, `albedo_bsa` | 1,956 | MODIS water mask, **all Jakarta** — the same North Jakarta coast that gaps WorldPop |
 | `heat_exposure_index` | 662 | derived from lst_max_c |
 
 ---

@@ -57,6 +57,8 @@ INDICATORS = [
      "extract_windgust", "extract_windgust"),
     ("utci",        "Indicator 17: UTCI and Mean Radiant Temp (ERA5-HEAT)",
      "extract_utci", "extract_utci"),
+    ("albedo",      "Indicator 18: Surface Albedo (MODIS MCD43A3)",
+     "extract_albedo", "extract_albedo"),
 ]
 
 # Carried into all_indicators.csv when present, beside the required five.

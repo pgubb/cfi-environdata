@@ -469,6 +469,50 @@ wind:
   batch_size: 1000
   getinfo_timeout_sec: 600
 
+# ---------- Indicator 18: Surface albedo (MODIS MCD43A3) ----------
+albedo:
+  # Shortwave broadband albedo: the share of incoming solar radiation the
+  # surface reflects rather than absorbs. The property UPSTREAM of the heat
+  # indicators - it governs how much energy reaches the surface in the first
+  # place - and the one "cool roof" interventions target.
+  #
+  # WHY A 463m PRODUCT CLEARS THE BLOCK BAR WHEN A 1km ONE BARELY DOES.
+  # Measured at 69% within-city variance, above builtup (57%) and hrsl (59%)
+  # and far above lst_max_c (19%). The reason is the inverse of the elevation
+  # case: the five city means are packed into 0.123-0.144, so there is almost
+  # no between-city term for the pooled share to be swallowed by. Albedo
+  # varies locally and barely between these cities.
+  #
+  # IT IS NOT A COOLING PROXY HERE - CHECK THE SIGN BEFORE MODELLING IT.
+  # Measured within city, albedo correlates POSITIVELY with lst_max_c (+0.28),
+  # the opposite of the naive expectation that a brighter surface runs cooler.
+  # The likely reason is that the brightest surfaces in these cities are bare
+  # soil rather than pale roofs, and bare ground is both bright AND hot, having
+  # no evaporative cooling and low thermal inertia. Treat a negative
+  # coefficient as a hypothesis to test, not a prior.
+  dataset: "MODIS/061/MCD43A3"
+  bands:
+    # White-sky (bihemispherical, fully diffuse) and black-sky (directional,
+    # fully direct) albedo. TRUE albedo lies BETWEEN the two, at a weight set
+    # by the diffuse fraction of incoming light; both are carried so that can
+    # be chosen downstream rather than assumed here.
+    wsa: "Albedo_WSA_shortwave"
+    bsa: "Albedo_BSA_shortwave"
+  scale_factor: 0.001
+  trailing_years: 2
+  # Native grid, used for the POINT sample where a zero-area geometry can be
+  # read at any scale.
+  scale_m: 463
+  # BLOCKS MUST REDUCE FINER THAN NATIVE. reduceRegions returns NULL whenever
+  # the reduction scale exceeds the polygon, and blocks are ~149m against a
+  # 463m cell - verified, it returns null for every single block at 463m. The
+  # longitudinal pipeline caps for the same reason. Safe here because this is
+  # a plain mean with no pixelArea term, so sampling finer than native only
+  # repeats cell values.
+  block_scale_m: 100
+  batch_size: 1000
+  getinfo_timeout_sec: 600
+
 # ---------- Yearly city heat panel (extract_heat_timeseries.py) ----------
 heat_timeseries:
   # Settings for the city x year panel ONLY. Deliberately not folded into the
@@ -756,7 +800,7 @@ blocks:
   #                     It is the one block indicator read from a LOCAL RASTER
   #                     rather than a GEE image, so it has no reduction scale.
   indicators: ["terrain", "heat", "flood", "canopy", "builtup",
-               "nightlights", "hrsl", "buildings", "no2", "pop2026"]
+               "nightlights", "hrsl", "buildings", "no2", "pop2026", "albedo"]
   # Per-indicator batch overrides. Where request cost is dominated by the
   # COLLECTION REDUCTION rather than the number of blocks, far fewer and much
   # larger requests is strictly faster - the finding that took the point

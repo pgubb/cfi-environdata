@@ -1,8 +1,8 @@
 # Data Dictionary: `all_indicators.csv`
 
-Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 122 columns: 7 passthrough from the input, 101 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, 2 derived fire-spread proxies, and 1 derived flood-exposure union.
+Output of the `cfi-environdata` remote sensing extraction pipeline. One row per **listed business** from the GSMM enumeration, built by `python/prepare_gsmm_input.py` and extracted by `python/run_all.py`. 124 columns: 7 passthrough from the input, 103 GEE-derived, 2 from a locally-read raster (indicator 14), 8 derived exceedance rates, 1 composite index, 2 derived fire-spread proxies, and 1 derived flood-exposure union.
 
-**Last generated:** 2026-10-02 (17 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
+**Last generated:** 2026-10-06 (18 indicators), **24,497 businesses across all five cities** — Delhi (7,805), Sao Paulo (5,224), Addis Ababa (4,301), Jakarta (4,072) and Lagos (3,095). The frame is now complete; `gsmm.include_cities` lists all five explicitly.
 
 **Sao Paulo was added 2026-09-14** from the final Brazil export (`GSMM_Analysis_20260911_Brazil.xlsx`), which raised Brazil's listing from 3,508 to 5,224 — a 49% increase and the largest single addition the frame has seen. All 22,781 previously-extracted rows were verified byte-identical, so only Sao Paulo was extracted. It is an unusual city on several axes and **breaks more cross-city generalisations than Delhi did**: it is simultaneously the CLEANEST city on particulates (`aod_mean` 0.21) and the WORST on combustion (`no2_mean` 163); it has by far the tallest buildings (12.7 m against Delhi's 9.6); and it is the one city where `heat_exposure_index` fails its convergent validation (see that column).
 
@@ -935,6 +935,47 @@ On the daily-mean field nothing in the entire five-city frame exceeds 8.4 m/s, s
 > ### An implementation note worth keeping
 >
 > The idiom the daily-resolution indicators use for thresholds — one mapped collection per threshold, then `.sum()` — **does not scale to hourly data**. Three separate passes over a single year (8,760 images) exceeded a 10-minute timeout. A single `map` producing a multi-band indicator image, summed once, does the same work in ~44 s. `ee.Reducer.fixedHistogram(threshold, 1000, 1)` gives identical counts and is also cheap, but returns an array per feature rather than a scalar. Verified: both approaches return exactly 686 / 204 / 72 hours for Sao Paulo over one year.
+
+---
+
+## Indicator 18: Surface Albedo (MODIS MCD43A3)
+
+| Column | Type | Units | Description |
+|---|---|---|---|
+| `albedo_wsa` | float | 0–1 | **White-sky** shortwave albedo — the fully-diffuse case. |
+| `albedo_bsa` | float | 0–1 | **Black-sky** shortwave albedo — the fully-direct-beam case. |
+
+**Data source:** MODIS MCD43A3 (`MODIS/061/MCD43A3`), bands `Albedo_WSA_shortwave` and `Albedo_BSA_shortwave`, scale factor 0.001, 463 m, averaged over the standard 730-day window.
+
+**Why this exists.** Albedo is the share of incoming solar radiation a surface reflects rather than absorbs — **the term upstream of every heat variable in this dataset**. LST, sWBGT and UTCI all describe the *consequence* of absorbed energy; albedo describes how much arrives. It is also the variable that cool-roof and pale-pavement interventions are designed to change, so it is the one with a policy lever attached.
+
+| City | `albedo_wsa` | `albedo_bsa` |
+|---|---|---|
+| Delhi | 0.144 | 0.131 |
+| Sao Paulo | 0.140 | 0.127 |
+| Addis Ababa | 0.137 | 0.125 |
+| Jakarta | 0.125 | 0.117 |
+| Lagos | 0.122 | 0.114 |
+
+**All five cities are dark and strikingly alike** — 0.122 to 0.144, so every one absorbs 86–88% of the sunlight that reaches it. There is very little to compare between cities here.
+
+### Read it within a city, where almost all the variation is
+
+That narrow between-city spread is exactly why this works at block level despite being a 463 m product: with almost no between-city term, **66% of the block variance and 58% of the business-point variance is within-city** — above `builtup_fraction` (57%) and `hrsl_density` (59%), and far above `lst_max_c` (19%). It is the mirror image of `elevation_m`, which is spatially fine but pooled-flat because its between-city range is enormous.
+
+> ### ⚠ It is NOT a cooling proxy here — check the sign before modelling it
+>
+> Measured within city across the full block grid, **albedo correlates *positively* with maximum LST: r = +0.38.** That is the opposite of the naive reading, in which a brighter surface absorbs less and runs cooler.
+>
+> The likely explanation is that the brightest surfaces in these cities are **bare soil, not pale roofs** — and bare ground is both bright *and* hot, having no evaporative cooling and low thermal inertia. The classic desert signature.
+>
+> This needs proper testing before it is relied on. The actionable point is narrower and firm: **a negative albedo coefficient is a hypothesis here, not a prior**, and anyone who signs it on physical intuition will be wrong on this frame.
+
+**It adds information rather than restating anything.** Within city it is near-orthogonal to everything else in the block table — canopy −0.18, elevation −0.19, nightlights −0.16, HRSL −0.09, and built-up −0.01.
+
+**Do not put `albedo_wsa` and `albedo_bsa` in the same model.** They correlate at **r = 0.94** and sit a near-constant 0.011 apart. Neither is "the" albedo: the true figure lies between them, weighted by the diffuse fraction `D` of incoming light, so a blue-sky albedo is `(1−D)·albedo_bsa + D·albedo_wsa`. Both are carried so that choice is explicit; white-sky is the conventional single summary.
+
+**Resolution and sampling.** At 463 m this is a neighbourhood value, not a premises one — a 50 m buffer sits deep inside a single cell — so it is sampled at the pixel containing the business rather than over buffers, as for the other coarse indicators. **Missing for 530 businesses and 1,956 blocks, all in Jakarta**: MODIS masks water, and this is the same North Jakarta coast that leaves 101 gaps in WorldPop.
 
 ---
 

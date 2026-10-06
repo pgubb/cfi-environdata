@@ -330,6 +330,14 @@ ROWS = [
      "GEE: ERA5-Land | still well below any damage threshold",
      "Days above 5 m/s daily-mean wind speed. Rare everywhere: Lagos 11, Sao Paulo 10, Delhi 1, Jakarta and Addis Ababa effectively 0. Retained as the upper end of the observed range; an 8 m/s threshold was tested and dropped for returning a constant."),
 
+    # ---- surface albedo (indicator 18) ----
+    ("albedo_wsa", "Surface albedo, white-sky", "env_surface", "continuous",
+     "GEE: MODIS/061/MCD43A3, 463m | the term UPSTREAM of the heat indicators",
+     "Share of incoming shortwave solar radiation the surface reflects rather than absorbs, averaged over the 730-day window. White-sky means the fully-diffuse case. This is the property upstream of every heat variable here - it sets how much energy reaches the surface at all - and the one that pale-roof and pale-pavement interventions are designed to change. All five cities are DARK and remarkably alike: 0.144 (Delhi), 0.140 (Sao Paulo), 0.137 (Addis Ababa), 0.125 (Jakarta), 0.122 (Lagos), so roughly 86-88% of incident sunlight is absorbed everywhere. READ IT WITHIN A CITY: the between-city spread is so narrow that 58% of its variance at business points, and 69% over blocks, is local. At 463m it is a NEIGHBOURHOOD value - a 50m buffer sits deep inside one cell - so it is sampled at the pixel containing the business rather than over buffers. Missing for 530 Jakarta businesses on the North Jakarta coast, where MODIS masks water, the same places WorldPop leaves gaps."),
+    ("albedo_bsa", "Surface albedo, black-sky", "env_surface", "continuous",
+     "GEE: MCD43A3 | the direct-beam counterpart to albedo_wsa",
+     "Black-sky albedo: the fully-direct-beam case, against albedo_wsa's fully-diffuse one. NEITHER IS THE ALBEDO - the real figure lies between them, weighted by the diffuse fraction of incoming light, so a blue-sky albedo can be formed as (1-D)*albedo_bsa + D*albedo_wsa for whatever D suits the application. Both are carried so that choice is explicit rather than made here. DO NOT PUT BOTH IN ONE MODEL: they correlate at r = 0.94 and sit a near-constant 0.011 apart, so the second adds collinearity rather than information. It runs slightly lower than white-sky in every city, as expected."),
+
     # ---- tropical nights (indicator 11, air temperature) ----
     ("tropical_nights_gt20c", "Tropical nights (>20C)", "env_heatstress", "continuous",
      "GEE: ERA5-Land temperature_2m_min | ETCCDI 'TR' | gap-free, of 730",

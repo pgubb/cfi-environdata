@@ -10,8 +10,8 @@ There are **three pipelines**, producing four datasets:
 
 | Pipeline | Output | Rows × cols | Unit of analysis |
 |---|---|---|---|
-| Point-level | `data/output/all_indicators.csv` | 24,497 × 122 | one listed business |
-| Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 17 | one sampling-grid block |
+| Point-level | `data/output/all_indicators.csv` | 24,497 × 124 | one listed business |
+| Block-level, static | `data/output/blocks/all_block_indicators.csv` | 120,314 × 19 | one sampling-grid block |
 | Block-level, longitudinal | `data/output/blocks/all_block_indicators_longitudinal.csv` | 1,925,024 × 18 | one block × 45-day period |
 | Yearly city panel | `data/output/heat_timeseries_yearly.csv` | see dictionary | one city × calendar year |
 
@@ -21,7 +21,7 @@ Between them they answer different questions: the business and block tables say 
 
 ## Indicators
 
-### Point level — 17 indicators
+### Point level — 18 indicators
 
 | # | Indicator | Source | Native | Temporal |
 |---|---|---|---|---|
@@ -42,6 +42,7 @@ Between them they answer different questions: the business and block tables say 
 | 15 | Near-surface wind | ERA5-Land | ~11 km | 2 yr window |
 | 16 | Wind gusts | ERA5 hourly | ~28 km | 2 yr window |
 | 17 | UTCI, mean radiant temperature | ERA5-HEAT | ~28 km | 2 yr window |
+| 18 | Surface albedo (white- and black-sky) | MODIS MCD43A3 | 463 m | 2 yr window |
 
 Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), a within-city `heat_exposure_index`, the fire-spread proxies `building_spacing_m` / `building_spacing_ratio`, and `flood_vulnerable_any` (exposed by either flood mechanism).
 
@@ -60,14 +61,14 @@ Plus derived columns computed after the merge: exceedance rates (`*_frac_gt*`), 
 
 ### Block level
 
-**Static (10 indicators):** terrain (elevation + slope), heat, flood, canopy, built-up, nightlights, HRSL, buildings, NO₂, WorldPop 2026 — a deliberate **subset** of the point indicators, chosen on native resolution and measured within-city variance, because a block map can only show what varies between blocks. Plus a derived `coastal_lowland` flag and a within-city `heat_exposure_index`.
+**Static (11 indicators):** terrain (elevation + slope), heat, flood, canopy, built-up, nightlights, HRSL, buildings, NO₂, WorldPop 2026, albedo — a deliberate **subset** of the point indicators, chosen on native resolution and measured within-city variance, because a block map can only show what varies between blocks. Plus a derived `coastal_lowland` flag and a within-city `heat_exposure_index`.
 
 > **That selection test has one known failure mode.** A pooled within-city variance share is the right test for an indicator meant to vary *everywhere* and the wrong one for an indicator meant to vary *somewhere*. `elevation_m` was excluded on a 0.4% pooled share until 2026-10-05, when it turned out Jakarta's blocks span −9 to 82 m and the coastal flag derived from elevation splits them almost perfectly. Check the per-city picture before dropping anything on a pooled number.
 
 **Longitudinal (6 indicators × 16 periods of 45 days):** heat, rainfall, air quality, nightlights, heat stress, NO₂. Rainfall, ERA5 heat stress and AOD are *dropped* from the static table for low spatial variation and appear here for high temporal variation.
 
 Full definitions, caveats and analytical notes are in the data dictionaries:
-- [`data/output/data_dictionary.md`](data/output/data_dictionary.md) — the 122 business-level columns
+- [`data/output/data_dictionary.md`](data/output/data_dictionary.md) — the 124 business-level columns
 - [`data/output/blocks/block_data_dictionary.md`](data/output/blocks/block_data_dictionary.md) — both block tables
 
 > **Read the dictionaries before using any indicator cross-city.** Several columns are not comparable between cities as raw values — the `heat_obs_gt*` and `aod_days_gt*` counts are over *observations actually made*, and cloud cover varies that denominator about 5–7× between cities, so use their `*_frac_*` companions. The ERA5-based columns at 11–28 km are city-level controls with no within-city signal.
@@ -101,7 +102,7 @@ gee:
 cd python
 python3 prepare_gsmm_input.py   # rebuild the input from cfi-map2r2-data
 python3 fetch_worldpop.py       # one-off: ~1.7 GB of rasters for indicator 14
-python3 run_all.py              # all 17 indicators + merge + derived columns
+python3 run_all.py              # all 18 indicators + merge + derived columns
 ```
 
 `fetch_worldpop.py` only needs running once, and skips files already present. Without it indicator 14 fails with a message naming the missing file.
@@ -110,7 +111,7 @@ python3 run_all.py              # all 17 indicators + merge + derived columns
 
 ```bash
 cd python/blocks
-python3 run_all_blocks.py       # 10 static indicators + merge
+python3 run_all_blocks.py       # 11 static indicators + merge
 python3 extract_longitudinal.py # 6 indicators x 16 periods + merge
 ```
 

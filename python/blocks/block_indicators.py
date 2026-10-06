@@ -127,6 +127,22 @@ def _buildings(config, bounds):
         ["building_height_mean", "building_fractional_count"])
 
 
+def _albedo(config, bounds):
+    """Shortwave albedo, white-sky and black-sky.
+
+    463m against ~149m blocks, so it would ordinarily be too coarse to map —
+    except that the five city means are packed into 0.123-0.144, leaving almost
+    no between-city term, and 69% of the variance is WITHIN city. Higher than
+    builtup (57%) or hrsl (59%). See block_scale: this must reduce finer than
+    native or reduceRegions returns NULL for every block.
+    """
+    from extract_albedo import build_albedo_image
+    a = config["albedo"]
+    start, end = get_analysis_window(config, trailing_years=a["trailing_years"])
+    img, _ = build_albedo_image(config, start, end)
+    return img.select(["albedo_wsa", "albedo_bsa"])
+
+
 def _no2(config, bounds):
     """Tropospheric NO2. Kept despite only 14% within-city variance because it
     is the sole combustion-specific pollution measure; expect a smooth surface
@@ -159,6 +175,7 @@ BLOCK_INDICATORS = {
     "no2":         (_no2,         ["no2_mean"]),
     # Local raster (WorldPop R2025A 2026), no GEE builder.
     "pop2026":     (None,         ["pop2026_density"]),
+    "albedo":      (_albedo,      ["albedo_wsa", "albedo_bsa"]),
 }
 
 # Config sections whose values affect each block indicator, for fingerprinting.
@@ -173,6 +190,7 @@ BLOCK_CONFIG_KEYS = {
     "buildings":   ["buildings"],
     "no2":         ["no2", "time_window"],
     "pop2026":     ["pop2026"],
+    "albedo":      ["albedo", "time_window"],
 }
 
 # Reduction scale per indicator, read FROM CONFIG so the two pipelines cannot
@@ -194,7 +212,13 @@ def block_scale(name: str, config: dict) -> int:
         return literals[name]
     section = {"heat": "heat", "canopy": "canopy", "builtup": "builtup",
                "nightlights": "nightlights", "hrsl": "hrsl",
-               "buildings": "buildings", "no2": "no2"}[name]
+               "buildings": "buildings", "no2": "no2", "albedo": "albedo"}[name]
     if name == "heat":
         return 1000          # MODIS LST native grid; heat has no scale_m
+    if name == "albedo":
+        # CAPPED BELOW NATIVE, deliberately. MCD43A3 is 463m and blocks are
+        # ~149m, so reducing at native returns NULL for every block - verified,
+        # not theorised. Safe because this is a plain mean with no pixelArea
+        # term. Same hazard and same fix as the longitudinal pipeline.
+        return int(config["albedo"]["block_scale_m"])
     return int(config[section]["scale_m"])

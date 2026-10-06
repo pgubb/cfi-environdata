@@ -304,12 +304,13 @@ INDICATOR_CONFIG_KEYS = {
     "wind":        ["wind", "time_window"],
     "windgust":    ["windgust", "time_window"],
     "utci":        ["utci", "time_window"],
+    "albedo":      ["albedo", "time_window"],
 }
 
 # Indicators whose window depends on the data when analysis_end_date is null.
 TIME_SERIES_INDICATORS = {"heat", "rainfall", "airquality", "nightlights",
                           "heatstress", "no2", "wind", "windgust",
-                          "utci"}
+                          "utci", "albedo"}
 
 # Keys that affect only speed, never results. Tuning these must NOT invalidate
 # a cache — otherwise raising a batch size silently forces a multi-hour rerun.
